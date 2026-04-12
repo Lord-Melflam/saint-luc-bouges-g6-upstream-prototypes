@@ -101,7 +101,7 @@ You can claim a functional prototype chain:
 This is enough for a credible technical proof-of-concept even without hospital system integration.
 
 
-7) What to do with the Python code
+7) What to do with the Python code (short answer)
 -------------------------------------------------
 Keep the Python code as your reproducible backend prototype (forecast + board + communication schedule), and use the web page as the presentation layer.
 Workflow: edit CSV -> run Python scripts -> publish via script.
