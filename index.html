@@ -142,6 +142,89 @@
     }
     .foot strong { color: var(--text); }
     .dot { color: var(--ok); font-weight: 700; }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .info {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      margin-left: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+      background: var(--accent2);
+      position: relative;
+      cursor: help;
+    }
+    .info::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 50%;
+      bottom: 135%;
+      transform: translateX(-50%);
+      width: 250px;
+      background: rgba(13, 18, 36, 0.95);
+      color: #f7f9ff;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .info:hover::after {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-2px);
+    }
+    .chip {
+      display: inline-block;
+      margin-right: 6px;
+      margin-top: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .feed-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .feed-row strong { color: var(--text); }
+    .status-ok { color: var(--ok); }
+    .status-med { color: #ffcc66; }
+    .status-risk { color: #ff8f8f; }
+    .tabs { margin-top: 10px; margin-bottom: 10px; }
+    .tabs button {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 7px 10px;
+      margin-right: 6px;
+      cursor: pointer;
+    }
+    .tabs button.active {
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-color: transparent;
+      color: white;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -155,11 +238,14 @@
       </div>
     </div>
     <h1>Saint-Luc Bouges - Group 6 Upstream Prototype</h1>
-    <p class="subtitle">LOS forecasting, early coordination signal, and patient communication trigger preview.</p>
+    <p class="subtitle">
+      LOS forecasting, early coordination signal, and stakeholder communication.
+      <span class="info" data-tip="LOS means Length Of Stay: the estimated number of days a patient remains hospitalized. Historical LOS means past hospitalization durations used to calibrate forecasting rules.">i</span>
+    </p>
 
     <div class="grid">
       <section class="card">
-        <h2>LOS Forecast Calculator</h2>
+        <h2>Forecast & Input Panel</h2>
         <label>Procedure type</label>
         <select id="procedure">
           <option value="orthopedic">orthopedic</option>
@@ -189,13 +275,35 @@
           <option value="true">true</option>
         </select>
 
-        <button class="run" onclick="runForecast()">Compute forecast</button>
+        <label>Patient name (for communication templates)</label>
+        <input id="patientName" type="text" value="Patient X" />
+
+        <button class="run" onclick="runApp()">Compute & Sync</button>
         <pre id="result" class="mono"></pre>
+        <div>
+          <span class="chip">Forecast engine</span>
+          <span class="chip">Coordination signal</span>
+          <span class="chip">Explainable rules</span>
+        </div>
       </section>
 
       <section class="card">
-        <h2>Communication Trigger Preview</h2>
-        <p id="messages" class="mono"></p>
+        <h2>Communication Hub
+          <span class="info" data-tip="Focus intentionally narrowed to 2 channels: nurse script (internal alignment) and SMS reminders (patient-facing updates).">i</span>
+        </h2>
+        <div class="tabs">
+          <button id="tabNurse" class="active" type="button" onclick="setCommTab('nurse')">Nurse Script</button>
+          <button id="tabSms" type="button" onclick="setCommTab('sms')">SMS Reminders</button>
+        </div>
+        <pre id="nurseScript" class="mono"></pre>
+        <pre id="smsMessages" class="mono" style="display:none;"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Stakeholder Update Feed
+          <span class="info" data-tip="Shared snapshot to keep patient, nurse, and bed manager aligned on the same discharge expectation and risk level.">i</span>
+        </h2>
+        <div id="stakeholderFeed"></div>
       </section>
     </div>
 
@@ -207,22 +315,110 @@
   </div>
 
   <script>
-    const BASE = {
-      orthopedic: 4.0,
-      digestive: 6.0,
-      urology: 5.0,
-      cardiovascular: 8.0,
-      general_surgery: 5.0,
-      emergency: 7.0
+    const CONFIG = {
+      procedureBase: {
+        orthopedic: 4.0,
+        digestive: 6.0,
+        urology: 5.0,
+        cardiovascular: 8.0,
+        general_surgery: 5.0,
+        emergency: 7.0
+      }
     };
 
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
-    }
+    const Helpers = {
+      clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      },
+      fmt(d) {
+        return d.toISOString().slice(0, 10);
+      }
+    };
 
-    function fmt(d) {
-      return d.toISOString().slice(0, 10);
-    }
+    const ForecastEngine = {
+      compute(input) {
+        let score = CONFIG.procedureBase[input.procedure] ?? 5.5;
+        if (input.age >= 75) score += 1.0;
+        else if (input.age >= 65) score += 0.5;
+        score += Math.min(input.comorbidity * 0.6, 3.0);
+        if (input.social) score += 1.5;
+        if (input.postacute) score += 1.0;
+        if (input.procedure === "emergency") score += 0.8;
+        const los = Math.max(1, Math.round(score));
+
+        let confidence = 0.92;
+        confidence -= Math.min(input.comorbidity * 0.08, 0.4);
+        if (input.social) confidence -= 0.12;
+        if (input.postacute) confidence -= 0.10;
+        if (input.procedure === "emergency") confidence -= 0.08;
+        confidence = Helpers.clamp(confidence, 0.35, 0.95);
+
+        const confidenceLabel = confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : "low";
+        const earlyFlag = confidenceLabel === "low" || input.social || input.postacute || los >= 7;
+        const today = new Date();
+        const expected = new Date(today.getTime() + los * 24 * 3600 * 1000);
+        return { los, confidence, confidenceLabel, earlyFlag, expected };
+      }
+    };
+
+    const CommunicationEngine = {
+      buildTimeline(expectedDate) {
+        return {
+          d2: new Date(expectedDate.getTime() - 2 * 24 * 3600 * 1000),
+          d1: new Date(expectedDate.getTime() - 1 * 24 * 3600 * 1000),
+          d0: expectedDate
+        };
+      },
+      buildNurseScript(name, forecast, timeline) {
+        return `Nurse script (handover-ready)
+Patient: ${name}
+Expected discharge: ${Helpers.fmt(forecast.expected)}
+Confidence: ${forecast.confidence.toFixed(2)} (${forecast.confidenceLabel})
+Early coordination: ${forecast.earlyFlag ? "YES" : "NO"}
+
+Script:
+1) "Current discharge target is ${Helpers.fmt(forecast.expected)}."
+2) "Please confirm pending blockers and discharge checklist completion."
+3) "If blockers persist, escalate to bed manager before ${Helpers.fmt(timeline.d1)}."`;
+      },
+      buildSmsMessages(name, timeline) {
+        return `D-2 (${Helpers.fmt(timeline.d2)}): Hello ${name}, your current discharge target is ${Helpers.fmt(timeline.d0)}. Please start preparing transport and documents.
+D-1 (${Helpers.fmt(timeline.d1)}): Hello ${name}, this is your discharge update. Target date remains ${Helpers.fmt(timeline.d0)} unless your care team informs you otherwise.
+D0 (${Helpers.fmt(timeline.d0)}): Hello ${name}, discharge-day update: your team will confirm final departure slot and post-discharge instructions.`;
+      }
+    };
+
+    const UI = {
+      readInput() {
+        return {
+          procedure: document.getElementById("procedure").value,
+          age: Number(document.getElementById("age").value),
+          comorbidity: Number(document.getElementById("comorbidity").value),
+          social: document.getElementById("social").value === "true",
+          postacute: document.getElementById("postacute").value === "true",
+          patientName: document.getElementById("patientName").value.trim() || "Patient"
+        };
+      },
+      renderForecast(forecast) {
+        document.getElementById("result").textContent =
+`predicted_los_days: ${forecast.los}
+confidence: ${forecast.confidence.toFixed(2)} (${forecast.confidenceLabel})
+expected_discharge_date: ${Helpers.fmt(forecast.expected)}
+early_coordination_flag: ${forecast.earlyFlag ? "yes" : "no"}`;
+      },
+      renderCommunication(nurseScript, smsMessages) {
+        document.getElementById("nurseScript").textContent = nurseScript;
+        document.getElementById("smsMessages").textContent = smsMessages;
+      },
+      renderStakeholderFeed(name, forecast) {
+        const riskClass = forecast.confidenceLabel === "high" ? "status-ok" : forecast.confidenceLabel === "medium" ? "status-med" : "status-risk";
+        document.getElementById("stakeholderFeed").innerHTML = `
+          <div class="feed-row"><strong>Patient (${name})</strong><span>Target discharge: ${Helpers.fmt(forecast.expected)}</span></div>
+          <div class="feed-row"><strong>Nurse team</strong><span class="${riskClass}">Confidence: ${forecast.confidenceLabel.toUpperCase()}</span></div>
+          <div class="feed-row"><strong>Bed manager</strong><span>${forecast.earlyFlag ? "Early coordination required" : "Routine tracking"}</span></div>
+        `;
+      }
+    };
 
     function setTheme(theme) {
       if (theme === "auto") {
@@ -241,51 +437,39 @@
       }
     }
 
-    function runForecast() {
-      const procedure = document.getElementById("procedure").value;
-      const age = Number(document.getElementById("age").value);
-      const comorbidity = Number(document.getElementById("comorbidity").value);
-      const social = document.getElementById("social").value === "true";
-      const postacute = document.getElementById("postacute").value === "true";
+    function setCommTab(tab) {
+      const nurse = document.getElementById("nurseScript");
+      const sms = document.getElementById("smsMessages");
+      const nurseBtn = document.getElementById("tabNurse");
+      const smsBtn = document.getElementById("tabSms");
+      if (tab === "nurse") {
+        nurse.style.display = "block";
+        sms.style.display = "none";
+        nurseBtn.classList.add("active");
+        smsBtn.classList.remove("active");
+      } else {
+        nurse.style.display = "none";
+        sms.style.display = "block";
+        nurseBtn.classList.remove("active");
+        smsBtn.classList.add("active");
+      }
+    }
 
-      let score = BASE[procedure] ?? 5.5;
-      if (age >= 75) score += 1.0;
-      else if (age >= 65) score += 0.5;
-      score += Math.min(comorbidity * 0.6, 3.0);
-      if (social) score += 1.5;
-      if (postacute) score += 1.0;
-      if (procedure === "emergency") score += 0.8;
-      const los = Math.max(1, Math.round(score));
+    function runApp() {
+      const input = UI.readInput();
+      const fc = ForecastEngine.compute(input);
+      const forecast = { ...fc, expected: fc.expected };
+      const timeline = CommunicationEngine.buildTimeline(forecast.expected);
+      const nurseScript = CommunicationEngine.buildNurseScript(input.patientName, forecast, timeline);
+      const smsMessages = CommunicationEngine.buildSmsMessages(input.patientName, timeline);
 
-      let confidence = 0.92;
-      confidence -= Math.min(comorbidity * 0.08, 0.4);
-      if (social) confidence -= 0.12;
-      if (postacute) confidence -= 0.10;
-      if (procedure === "emergency") confidence -= 0.08;
-      confidence = clamp(confidence, 0.35, 0.95);
-
-      const confidenceLabel = confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : "low";
-      const earlyFlag = confidenceLabel === "low" || social || postacute || los >= 7;
-
-      const today = new Date();
-      const expected = new Date(today.getTime() + los * 24 * 3600 * 1000);
-      const d2 = new Date(expected.getTime() - 2 * 24 * 3600 * 1000);
-      const d1 = new Date(expected.getTime() - 1 * 24 * 3600 * 1000);
-
-      document.getElementById("result").textContent =
-`predicted_los_days: ${los}
-confidence: ${confidence.toFixed(2)} (${confidenceLabel})
-expected_discharge_date: ${fmt(expected)}
-early_coordination_flag: ${earlyFlag ? "yes" : "no"}`;
-
-      document.getElementById("messages").textContent =
-`D-2 (${fmt(d2)}): Share expected discharge target and preparation checklist.
-D-1 (${fmt(d1)}): Confirm expected discharge and logistics (transport, documents, meds).
-D0 (${fmt(expected)}): Final discharge slot and post-discharge instructions.`;
+      UI.renderForecast(forecast);
+      UI.renderCommunication(nurseScript, smsMessages);
+      UI.renderStakeholderFeed(input.patientName, forecast);
     }
 
     loadTheme();
-    runForecast();
+    runApp();
   </script>
 </body>
 </html>
