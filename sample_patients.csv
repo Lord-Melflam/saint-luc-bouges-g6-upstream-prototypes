@@ -1,0 +1,17 @@
+patient_id,name,procedure_type,admission_date,age,comorbidity_score,social_complexity,post_acute_need,blockers
+P001,Patient A,orthopedic,2026-04-10,68,1,false,false,awaiting PT slot
+P002,Patient B,digestive,2026-04-09,74,2,true,false,family transport unclear
+P003,Patient C,urology,2026-04-11,59,1,false,false,
+P004,Patient D,cardiovascular,2026-04-08,77,3,true,true,rehab bed not confirmed;prescription pending
+P005,Patient E,general_surgery,2026-04-10,63,2,false,true,home nurse coordination
+P006,Patient F,emergency,2026-04-12,71,2,true,false,social worker follow-up
+P007,Patient G,orthopedic,2026-04-07,82,3,false,true,mobility aid delivery
+P008,Patient H,digestive,2026-04-11,45,0,false,false,
+P009,Patient I,urology,2026-04-06,66,2,true,false,caregiver availability uncertain
+P010,Patient J,cardiovascular,2026-04-05,79,4,true,true,cardiac rehab intake pending;transport
+P011,Patient K,general_surgery,2026-04-12,52,1,false,false,awaiting lab validation
+P012,Patient L,emergency,2026-04-10,88,3,true,true,home adaptation required
+P013,Patient M,orthopedic,2026-04-09,34,0,false,false,
+P014,Patient N,digestive,2026-04-08,70,2,false,true,dietician clearance pending
+P015,Patient O,general_surgery,2026-04-11,61,1,true,false,family training session needed
+P016,Patient P,neurology,2026-04-07,73,3,true,true,community facility slot pending
