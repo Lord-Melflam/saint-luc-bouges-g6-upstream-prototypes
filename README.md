@@ -91,4 +91,4 @@ Use Python as your **data/prototype backend**, and the web page as your **demo f
 3. Use generated outputs in your portfolio/slides as evidence of operational feasibility.
 4. Publish updates with `publish_github_pages.sh` whenever you iterate.
 
-In short: the Python files are not optional; they are your reproducible proof that the concept goes beyond slides.
+In short: the Python files are not optional; they are our reproducible proof that the concept goes beyond slides.
