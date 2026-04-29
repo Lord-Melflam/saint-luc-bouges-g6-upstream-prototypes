@@ -6,26 +6,26 @@
   <title>Saint-Luc Bouges G6 - Upstream Prototype</title>
   <style>
     :root {
-      --bg: #0b1020;
-      --bg2: #111936;
+      --bg: #111417;
+      --bg2: #1c2329;
       --panel: rgba(255, 255, 255, 0.08);
-      --text: #ecf2ff;
-      --muted: #b4c2e6;
-      --accent: #5ea2ff;
-      --accent2: #8a5cff;
+      --text: #eef3ef;
+      --muted: #b7c2b8;
+      --accent: #4dbf8c;
+      --accent2: #d28a3a;
       --ok: #57d2a1;
-      --border: rgba(255, 255, 255, 0.2);
+      --border: rgba(232, 240, 233, 0.16);
     }
     [data-theme="light"] {
-      --bg: #edf3ff;
-      --bg2: #d8e5ff;
+      --bg: #f7f4ec;
+      --bg2: #ece6d9;
       --panel: rgba(255, 255, 255, 0.85);
-      --text: #16203b;
-      --muted: #4e5e86;
-      --accent: #1f6fff;
-      --accent2: #7048e8;
+      --text: #1d2521;
+      --muted: #5d6d63;
+      --accent: #2f9f71;
+      --accent2: #b7722e;
       --ok: #169a6e;
-      --border: rgba(22, 32, 59, 0.16);
+      --border: rgba(29, 37, 33, 0.16);
     }
     * { box-sizing: border-box; }
     body {
@@ -420,21 +420,40 @@ early_coordination_flag: ${forecast.earlyFlag ? "yes" : "no"}`;
       }
     };
 
+    const THEME_KEY = "upstream-theme-mode";
+    const LEGACY_THEME_KEY = "theme";
+    let themeMode = "auto";
+
+    function resolveAutoTheme() {
+      const hour = new Date().getHours();
+      return (hour >= 7 && hour < 19) ? "light" : "dark";
+    }
+
+    function applyTheme(mode) {
+      const resolved = mode === "auto" ? resolveAutoTheme() : mode;
+      document.documentElement.setAttribute("data-theme", resolved);
+    }
+
     function setTheme(theme) {
-      if (theme === "auto") {
-        document.documentElement.removeAttribute("data-theme");
-        localStorage.removeItem("theme");
-        return;
-      }
-      document.documentElement.setAttribute("data-theme", theme);
-      localStorage.setItem("theme", theme);
+      if (theme !== "dark" && theme !== "light" && theme !== "auto") return;
+      themeMode = theme;
+      localStorage.setItem(THEME_KEY, themeMode);
+      applyTheme(themeMode);
     }
 
     function loadTheme() {
-      const saved = localStorage.getItem("theme");
-      if (saved) {
-        document.documentElement.setAttribute("data-theme", saved);
+      const saved = localStorage.getItem(THEME_KEY);
+      const legacy = localStorage.getItem(LEGACY_THEME_KEY);
+      themeMode = saved || legacy || "auto";
+      if (themeMode !== "dark" && themeMode !== "light" && themeMode !== "auto") {
+        themeMode = "auto";
       }
+      localStorage.setItem(THEME_KEY, themeMode);
+      localStorage.removeItem(LEGACY_THEME_KEY);
+      applyTheme(themeMode);
+      setInterval(() => {
+        if (themeMode === "auto") applyTheme("auto");
+      }, 60000);
     }
 
     function setCommTab(tab) {
