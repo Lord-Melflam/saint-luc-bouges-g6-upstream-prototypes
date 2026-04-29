@@ -398,7 +398,8 @@
         <label>Blocker detail (optional)</label>
         <input id="blockerDetail" type="text" value="" />
 
-        <button class="run" onclick="runApp()">Compute & Sync</button>
+        <button class="run" onclick="runApp('add')">Add patient & Sync</button>
+        <button class="run" style="margin-left:8px;" onclick="runApp('update')">Update existing ID</button>
         <pre id="result" class="mono"></pre>
         <div>
           <span class="chip">Forecast engine</span>
@@ -564,7 +565,7 @@
     };
 
     const DataContract = {
-      buildPatient(input, forecast) {
+      buildPatient(input, forecast, resolvedPatientId) {
         const warnings = [];
         if (!input.procedureSubtype) warnings.push("Missing procedure subtype");
         if (input.blockerCategory !== "none" && !input.blockerDetail) warnings.push("Blocker category set but detail missing");
@@ -576,7 +577,7 @@
         else if (minutesToThreshold <= 30) thresholdRisk = "warning";
         else if (minutesToThreshold <= 120) thresholdRisk = "info";
         return {
-          patientId: input.patientId || `P-${Date.now()}`,
+          patientId: resolvedPatientId,
           name: input.patientName,
           unitService: input.unitService,
           specialty: input.specialty,
@@ -667,21 +668,33 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
       listeners: [],
       subscribe(listener) { this.listeners.push(listener); },
       notify() { persistState(this.state); this.listeners.forEach((listener) => listener(this.state)); },
-      upsertFromInput(input) {
+      makeUniquePatientId(baseId) {
+        let candidate = (baseId || "").trim() || `P-${Date.now()}`;
+        let i = 1;
+        while (this.state.patients.some((p) => p.patientId === candidate)) {
+          candidate = `${baseId || "P"}-${i++}`;
+        }
+        return candidate;
+      },
+      upsertFromInput(input, options = { updateExisting: false }) {
         const forecast = ForecastEngine.compute(input);
-        const incoming = DataContract.buildPatient(input, forecast);
-        const existing = this.state.patients.find((p) => p.patientId === incoming.patientId);
-        if (existing && existing.bedId) releaseBed(this.state, existing.bedId);
+        const requestedId = (input.patientId || "").trim() || `P-${Date.now()}`;
+        const existing = this.state.patients.find((p) => p.patientId === requestedId);
+        const resolvedId = (options.updateExisting && existing)
+          ? requestedId
+          : this.makeUniquePatientId(requestedId);
+        const incoming = DataContract.buildPatient(input, forecast, resolvedId);
+        if (options.updateExisting && existing && existing.bedId) releaseBed(this.state, existing.bedId);
         const bed = assignBed(this.state, incoming, incoming.bedPreference);
         if (bed) incoming.bedId = bed.bedId;
         else {
           incoming.status = "waiting_bed";
           incoming.dataWarnings.push("No free bed available in selected service");
         }
-        const idx = this.state.patients.findIndex((p) => p.patientId === incoming.patientId);
+        const idx = this.state.patients.findIndex((p) => p.patientId === resolvedId);
         if (idx >= 0) this.state.patients[idx] = incoming;
         else this.state.patients.push(incoming);
-        this.state.currentPatientId = incoming.patientId;
+        this.state.currentPatientId = resolvedId;
         this.notify();
       },
       setRoleMode(roleMode) { this.state.roleMode = roleMode; this.notify(); },
@@ -771,9 +784,16 @@ data_quality_warnings: ${warningLine}`;
       else { nurse.style.display = "none"; sms.style.display = "block"; nurseBtn.classList.remove("active"); smsBtn.classList.add("active"); }
     }
 
-    function runApp() { StateStore.setScenario("manual"); StateStore.upsertFromInput(UI.readInput()); }
+    function runApp(mode = "add") {
+      StateStore.setScenario("manual");
+      StateStore.upsertFromInput(UI.readInput(), { updateExisting: mode === "update" });
+    }
     function setRoleMode(mode) { StateStore.setRoleMode(mode === "nurse" ? "nurse" : "planner"); }
-    function runScenario(name) { ScenarioEngine.apply(name); StateStore.setScenario(name); StateStore.upsertFromInput(UI.readInput()); }
+    function runScenario(name) {
+      ScenarioEngine.apply(name);
+      StateStore.setScenario(name);
+      StateStore.upsertFromInput(UI.readInput(), { updateExisting: true });
+    }
 
     window.addEventListener("storage", (e) => {
       if (e.key === STORAGE_KEY) {
@@ -786,7 +806,7 @@ data_quality_warnings: ${warningLine}`;
     loadTheme();
     document.getElementById("roleMode").value = StateStore.state.roleMode || "planner";
     setRoleMode(document.getElementById("roleMode").value);
-    runApp();
+    runApp("add");
   </script>
 </body>
 </html>
