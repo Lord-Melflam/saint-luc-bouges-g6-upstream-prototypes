@@ -246,6 +246,26 @@
     }
     .sim-grid button:hover { border-color: var(--accent); }
     .hidden { display: none !important; }
+    .page-nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .page-nav a {
+      text-decoration: none;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 7px 10px;
+      background: var(--panel);
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .page-nav a.active {
+      color: white;
+      border-color: transparent;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
   </style>
 </head>
 <body>
@@ -263,6 +283,10 @@
       LOS forecasting, early coordination signal, and stakeholder communication.
       <span class="info" data-tip="LOS means Length Of Stay: the estimated number of days a patient remains hospitalized. Historical LOS means past hospitalization durations used to calibrate forecasting rules.">i</span>
     </p>
+    <nav class="page-nav">
+      <a class="active" href="index.html">Forecast & Coordination</a>
+      <a href="operations.html">Operations Matrix</a>
+    </nav>
 
     <section class="toolbar">
       <div class="card" style="padding:12px;">
@@ -318,6 +342,8 @@
 
         <label>Patient name (for communication templates)</label>
         <input id="patientName" type="text" value="Patient X" />
+        <label>Patient ID</label>
+        <input id="patientId" type="text" value="P-LIVE-001" />
 
         <div class="split">
           <div>
@@ -362,6 +388,12 @@
             <input id="departureTime" type="time" value="11:00" />
           </div>
         </div>
+        <label>Preferred bed type</label>
+        <select id="bedType">
+          <option value="standard">standard</option>
+          <option value="premium">premium</option>
+          <option value="monitoring">monitoring</option>
+        </select>
 
         <label>Blocker detail (optional)</label>
         <input id="blockerDetail" type="text" value="" />
@@ -405,6 +437,11 @@
         <h2>Tutorial & Demo script</h2>
         <pre id="tutorialScript" class="mono"></pre>
       </section>
+
+      <section class="card">
+        <h2>Patient registry snapshot</h2>
+        <div id="patientRegistry"></div>
+      </section>
     </div>
 
     <footer class="foot">
@@ -415,6 +452,7 @@
   </div>
 
   <script>
+    const STORAGE_KEY = "upstream-shared-state-v1";
     const CONFIG = {
       dischargeThresholdTime: "12:00",
       alertOwners: {
@@ -427,30 +465,22 @@
         blocker_logistics: "Unit logistics referent",
         data_quality: "Planning office"
       },
-      unitCapacity: {
-        orthopedics: 24,
-        cardiology: 20,
-        digestive: 18,
-        urology: 16,
-        emergency: 22
+      bedBlueprint: {
+        orthopedics: [["O1", "standard", "premium"], ["O2", "standard", "standard"], ["O3", "premium", "standard"]],
+        cardiology: [["C1", "monitoring", "standard"], ["C2", "monitoring", "premium"], ["C3", "standard", "standard"]],
+        digestive: [["D1", "standard", "standard"], ["D2", "premium", "standard"], ["D3", "standard", "standard"]],
+        urology: [["U1", "standard", "premium"], ["U2", "standard", "standard"], ["U3", "premium", "standard"]],
+        emergency: [["E1", "monitoring", "standard"], ["E2", "monitoring", "standard"], ["E3", "standard", "standard"]]
       },
       procedureBase: {
-        orthopedic: 4.0,
-        digestive: 6.0,
-        urology: 5.0,
-        cardiovascular: 8.0,
-        general_surgery: 5.0,
-        emergency: 7.0
+        orthopedic: 4.0, digestive: 6.0, urology: 5.0, cardiovascular: 8.0, general_surgery: 5.0, emergency: 7.0
       }
     };
 
     const Helpers = {
-      clamp(value, min, max) {
-        return Math.max(min, Math.min(max, value));
-      },
-      fmt(d) {
-        return d.toISOString().slice(0, 10);
-      },
+      clamp(value, min, max) { return Math.max(min, Math.min(max, value)); },
+      fmt(d) { return d.toISOString().slice(0, 10); },
+      nowIso() { return new Date().toISOString(); },
       timeToMinutes(time) {
         const [h, m] = (time || "00:00").split(":").map(Number);
         return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
@@ -462,6 +492,54 @@
       }
     };
 
+    function generateBeds() {
+      const beds = [];
+      for (const [service, chambers] of Object.entries(CONFIG.bedBlueprint)) {
+        for (const [chamber, t1, t2] of chambers) {
+          [t1, t2].forEach((type, idx) => {
+            beds.push({
+              bedId: `${service.toUpperCase()}-${chamber}-B${idx + 1}`,
+              service,
+              chamber,
+              number: idx + 1,
+              type,
+              occupiedBy: null
+            });
+          });
+        }
+      }
+      return beds;
+    }
+
+    function loadSharedState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return { patients: [], beds: generateBeds(), currentPatientId: null, roleMode: "planner", activeScenario: "manual" };
+    }
+
+    function persistState(state) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function findBed(state, bedId) {
+      return state.beds.find((b) => b.bedId === bedId);
+    }
+
+    function releaseBed(state, bedId) {
+      const bed = findBed(state, bedId);
+      if (bed) bed.occupiedBy = null;
+    }
+
+    function assignBed(state, patient, preferredType) {
+      const byService = state.beds.filter((b) => b.service === patient.unitService && !b.occupiedBy);
+      let bed = byService.find((b) => b.type === preferredType) || byService[0];
+      if (!bed) return null;
+      bed.occupiedBy = patient.patientId;
+      return bed;
+    }
+
     const ForecastEngine = {
       compute(input) {
         let score = CONFIG.procedureBase[input.procedure] ?? 5.5;
@@ -472,18 +550,15 @@
         if (input.postacute) score += 1.0;
         if (input.procedure === "emergency") score += 0.8;
         const los = Math.max(1, Math.round(score));
-
         let confidence = 0.92;
         confidence -= Math.min(input.comorbidity * 0.08, 0.4);
         if (input.social) confidence -= 0.12;
         if (input.postacute) confidence -= 0.10;
         if (input.procedure === "emergency") confidence -= 0.08;
         confidence = Helpers.clamp(confidence, 0.35, 0.95);
-
         const confidenceLabel = confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : "low";
         const earlyFlag = confidenceLabel === "low" || input.social || input.postacute || los >= 7;
-        const today = new Date();
-        const expectedDate = new Date(today.getTime() + los * 24 * 3600 * 1000);
+        const expectedDate = new Date(Date.now() + los * 24 * 3600 * 1000);
         return { los, confidence, confidenceLabel, earlyFlag, expectedDate };
       }
     };
@@ -493,8 +568,6 @@
         const warnings = [];
         if (!input.procedureSubtype) warnings.push("Missing procedure subtype");
         if (input.blockerCategory !== "none" && !input.blockerDetail) warnings.push("Blocker category set but detail missing");
-        if (!input.unitService) warnings.push("Missing unit/service");
-
         const thresholdMinutes = Helpers.timeToMinutes(CONFIG.dischargeThresholdTime);
         const departureMinutes = Helpers.timeToMinutes(input.departureTime);
         const minutesToThreshold = thresholdMinutes - departureMinutes;
@@ -502,14 +575,14 @@
         if (minutesToThreshold < 0) thresholdRisk = "critical";
         else if (minutesToThreshold <= 30) thresholdRisk = "warning";
         else if (minutesToThreshold <= 120) thresholdRisk = "info";
-
         return {
-          patientId: "LIVE-001",
+          patientId: input.patientId || `P-${Date.now()}`,
           name: input.patientName,
           unitService: input.unitService,
           specialty: input.specialty,
           procedureType: input.procedure,
           procedureSubtype: input.procedureSubtype,
+          bedPreference: input.bedType,
           age: input.age,
           comorbidityScore: input.comorbidity,
           socialComplexity: input.social,
@@ -522,161 +595,97 @@
           thresholdRisk,
           billingLossRisk: minutesToThreshold < 0,
           dataWarnings: warnings,
+          status: "booked",
+          updatedAt: Helpers.nowIso(),
           forecast
         };
       }
     };
 
-    const CommunicationEngine = {
-      buildTimeline(expectedDate) {
-        return {
-          d2: new Date(expectedDate.getTime() - 2 * 24 * 3600 * 1000),
-          d1: new Date(expectedDate.getTime() - 1 * 24 * 3600 * 1000),
-          d0: expectedDate
-        };
-      },
-      buildNurseScript(patient, timeline) {
-        return `Nurse script (handover-ready)
-Patient: ${patient.name}
-Unit: ${patient.unitService} | Specialty: ${patient.specialty}
-Procedure: ${patient.procedureType} / ${patient.procedureSubtype}
-Expected discharge: ${Helpers.fmt(patient.forecast.expectedDate)} at ${patient.plannedDepartureTime}
-Confidence: ${patient.forecast.confidence.toFixed(2)} (${patient.forecast.confidenceLabel})
-Threshold (${patient.dischargeThresholdTime}) risk: ${patient.thresholdRisk.toUpperCase()}
-Early coordination: ${patient.forecast.earlyFlag ? "YES" : "NO"}
-
-Script:
-1) "Current discharge target is ${Helpers.fmt(patient.forecast.expectedDate)} at ${patient.plannedDepartureTime}."
-2) "Please confirm blocker status (${patient.blockerCategory}) and checklist completion."
-3) "If blockers persist, escalate to bed manager before ${Helpers.fmt(timeline.d1)}."`;
-      },
-      buildSmsMessages(patient, timeline) {
-        return `D-2 (${Helpers.fmt(timeline.d2)}): Hello ${patient.name}, your current discharge target is ${Helpers.fmt(timeline.d0)}. Please start preparing transport and documents.
-D-1 (${Helpers.fmt(timeline.d1)}): Hello ${patient.name}, this is your discharge update. Target date remains ${Helpers.fmt(timeline.d0)} unless your care team informs you otherwise.
-D0 (${Helpers.fmt(timeline.d0)}): Hello ${patient.name}, discharge-day update: your team will confirm your final departure slot around ${patient.plannedDepartureTime}.`;
+    const ControlTowerEngine = {
+      compute(state) {
+        const occByService = {};
+        for (const bed of state.beds) occByService[bed.service] = (occByService[bed.service] || 0) + (bed.occupiedBy ? 1 : 0);
+        const capByService = {};
+        for (const bed of state.beds) capByService[bed.service] = (capByService[bed.service] || 0) + 1;
+        const occupancyRows = Object.keys(capByService).map((service) => {
+          const current = occByService[service] || 0;
+          const capacity = capByService[service];
+          const rate = Math.round((current / capacity) * 100);
+          return { service, current, capacity, rate };
+        });
+        const activePatients = state.patients.filter((p) => p.status !== "discharged");
+        const thresholdAtRisk = activePatients.filter((p) => p.thresholdRisk !== "safe");
+        const afterThreshold = activePatients.filter((p) => p.billingLossRisk).length;
+        return { occupancyRows, activePatients, thresholdAtRisk, afterThreshold };
       }
     };
 
-    const ControlTowerEngine = {
-      compute(patients) {
-        const occupancy = {};
-        for (const p of patients) {
-          occupancy[p.unitService] = (occupancy[p.unitService] || 0) + 1;
-        }
-        const occupancyRows = Object.keys(CONFIG.unitCapacity).map((unit) => {
-          const current = occupancy[unit] || 0;
-          const capacity = CONFIG.unitCapacity[unit];
-          const rate = Math.round((current / capacity) * 100);
-          return { unit, current, capacity, rate };
-        });
-        const thresholdAtRisk = patients.filter((p) => p.thresholdRisk !== "safe");
-        const afterThreshold = patients.filter((p) => p.billingLossRisk).length;
-        const blockerCounts = patients.reduce((acc, p) => {
-          const key = p.blockerCategory || "none";
-          acc[key] = (acc[key] || 0) + 1;
-          return acc;
-        }, {});
-        return {
-          occupancyRows,
-          totalPatients: patients.length,
-          afterThreshold,
-          thresholdAtRisk,
-          blockerCounts
-        };
+    const CommunicationEngine = {
+      buildTimeline(expectedDate) {
+        return { d2: new Date(expectedDate.getTime() - 2 * 86400000), d1: new Date(expectedDate.getTime() - 86400000), d0: expectedDate };
+      },
+      buildNurseScript(patient, timeline) {
+        return `Nurse script (handover-ready)
+Patient: ${patient.name} (${patient.patientId})
+Service: ${patient.unitService} | Bed: ${patient.bedId || "pending"}
+Procedure: ${patient.procedureType} / ${patient.procedureSubtype}
+Expected discharge: ${Helpers.fmt(patient.forecast.expectedDate)} at ${patient.plannedDepartureTime}
+Threshold (${patient.dischargeThresholdTime}) risk: ${patient.thresholdRisk.toUpperCase()}
+
+1) Confirm blocker (${patient.blockerCategory}) and checklist completion.
+2) Escalate before ${Helpers.fmt(timeline.d1)} if blocker persists.
+3) Keep departure before ${patient.dischargeThresholdTime}.`;
+      },
+      buildSmsMessages(patient, timeline) {
+        return `D-2 (${Helpers.fmt(timeline.d2)}): discharge target ${Helpers.fmt(timeline.d0)}.
+D-1 (${Helpers.fmt(timeline.d1)}): confirmation pending.
+D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTime}.`;
       }
     };
 
     const ScenarioEngine = {
       presets: {
-        late_transport: {
-          patientName: "Scenario - Late transport",
-          blockerCategory: "transport",
-          blockerDetail: "Transport provider delayed by 2h",
-          departureTime: "12:20",
-          social: "true"
-        },
-        unresolved_blocker: {
-          patientName: "Scenario - Unresolved blocker",
-          blockerCategory: "admin",
-          blockerDetail: "Discharge prescription not signed",
-          departureTime: "11:45",
-          postacute: "true"
-        },
-        late_medical_validation: {
-          patientName: "Scenario - Late medical validation",
-          blockerCategory: "medical",
-          blockerDetail: "Final physician validation pending",
-          departureTime: "12:10",
-          procedure: "cardiovascular"
-        },
-        occupancy_spike: {
-          patientName: "Scenario - Occupancy spike",
-          blockerCategory: "none",
-          blockerDetail: "",
-          departureTime: "11:10",
-          unitService: "emergency",
-          procedure: "emergency",
-          social: "true"
-        },
-        missing_critical_data: {
-          patientName: "Scenario - Missing data",
-          blockerCategory: "transport",
-          blockerDetail: "",
-          departureTime: "11:40",
-          procedureSubtype: ""
-        }
+        late_transport: { patientName: "Late transport case", patientId: "P-SC-LATE-TR", blockerCategory: "transport", blockerDetail: "Vehicle delayed", departureTime: "12:20", social: "true" },
+        unresolved_blocker: { patientName: "Unresolved blocker case", patientId: "P-SC-BLOCK", blockerCategory: "admin", blockerDetail: "Prescription pending", departureTime: "11:50", postacute: "true" },
+        late_medical_validation: { patientName: "Late validation case", patientId: "P-SC-MED", procedure: "cardiovascular", blockerCategory: "medical", blockerDetail: "Final validation pending", departureTime: "12:10" },
+        occupancy_spike: { patientName: "Occupancy spike case", patientId: "P-SC-OCC", unitService: "emergency", procedure: "emergency", blockerCategory: "none", blockerDetail: "", departureTime: "11:15", social: "true" },
+        missing_critical_data: { patientName: "Missing data case", patientId: "P-SC-MISS", blockerCategory: "transport", blockerDetail: "", procedureSubtype: "", departureTime: "11:40" }
       },
       apply(name) {
-        const preset = this.presets[name];
-        if (!preset) return;
-        if (preset.procedure) document.getElementById("procedure").value = preset.procedure;
-        if (preset.patientName) document.getElementById("patientName").value = preset.patientName;
-        if (preset.blockerCategory) document.getElementById("blockerCategory").value = preset.blockerCategory;
-        if (Object.prototype.hasOwnProperty.call(preset, "blockerDetail")) {
-          document.getElementById("blockerDetail").value = preset.blockerDetail;
+        const p = this.presets[name];
+        if (!p) return;
+        for (const [k, v] of Object.entries(p)) {
+          const el = document.getElementById(k);
+          if (el) el.value = v;
         }
-        if (preset.departureTime) document.getElementById("departureTime").value = preset.departureTime;
-        if (preset.unitService) document.getElementById("unitService").value = preset.unitService;
-        if (preset.procedureSubtype !== undefined) document.getElementById("procedureSubtype").value = preset.procedureSubtype;
-        if (preset.social) document.getElementById("social").value = preset.social;
-        if (preset.postacute) document.getElementById("postacute").value = preset.postacute;
       }
     };
 
     const StateStore = {
-      state: {
-        patients: [
-          { patientId: "S1", name: "Seed A", unitService: "orthopedics", thresholdRisk: "safe", billingLossRisk: false },
-          { patientId: "S2", name: "Seed B", unitService: "cardiology", thresholdRisk: "warning", billingLossRisk: false },
-          { patientId: "S3", name: "Seed C", unitService: "digestive", thresholdRisk: "critical", billingLossRisk: true }
-        ],
-        currentPatient: null,
-        roleMode: "planner",
-        activeScenario: "manual"
-      },
+      state: loadSharedState(),
       listeners: [],
-      subscribe(listener) {
-        this.listeners.push(listener);
-      },
-      notify() {
-        this.listeners.forEach((listener) => listener(this.state));
-      },
-      setCurrentFromInput(input) {
+      subscribe(listener) { this.listeners.push(listener); },
+      notify() { persistState(this.state); this.listeners.forEach((listener) => listener(this.state)); },
+      upsertFromInput(input) {
         const forecast = ForecastEngine.compute(input);
-        const patient = DataContract.buildPatient(input, forecast);
-        const idx = this.state.patients.findIndex((p) => p.patientId === patient.patientId);
-        if (idx >= 0) this.state.patients[idx] = patient;
-        else this.state.patients.push(patient);
-        this.state.currentPatient = patient;
+        const incoming = DataContract.buildPatient(input, forecast);
+        const existing = this.state.patients.find((p) => p.patientId === incoming.patientId);
+        if (existing && existing.bedId) releaseBed(this.state, existing.bedId);
+        const bed = assignBed(this.state, incoming, incoming.bedPreference);
+        if (bed) incoming.bedId = bed.bedId;
+        else {
+          incoming.status = "waiting_bed";
+          incoming.dataWarnings.push("No free bed available in selected service");
+        }
+        const idx = this.state.patients.findIndex((p) => p.patientId === incoming.patientId);
+        if (idx >= 0) this.state.patients[idx] = incoming;
+        else this.state.patients.push(incoming);
+        this.state.currentPatientId = incoming.patientId;
         this.notify();
       },
-      setRoleMode(roleMode) {
-        this.state.roleMode = roleMode;
-        this.notify();
-      },
-      setScenario(name) {
-        this.state.activeScenario = name;
-      }
+      setRoleMode(roleMode) { this.state.roleMode = roleMode; this.notify(); },
+      setScenario(name) { this.state.activeScenario = name; }
     };
 
     const UI = {
@@ -688,142 +697,69 @@ D0 (${Helpers.fmt(timeline.d0)}): Hello ${patient.name}, discharge-day update: y
           social: document.getElementById("social").value === "true",
           postacute: document.getElementById("postacute").value === "true",
           patientName: document.getElementById("patientName").value.trim() || "Patient",
+          patientId: document.getElementById("patientId").value.trim() || "",
           unitService: document.getElementById("unitService").value,
           specialty: document.getElementById("specialty").value,
           procedureSubtype: document.getElementById("procedureSubtype").value.trim(),
           blockerCategory: document.getElementById("blockerCategory").value,
           blockerDetail: document.getElementById("blockerDetail").value.trim(),
-          departureTime: document.getElementById("departureTime").value || "11:00"
+          departureTime: document.getElementById("departureTime").value || "11:00",
+          bedType: document.getElementById("bedType").value
         };
       },
-      renderForecast(patient) {
-        const forecast = patient.forecast;
+      render(state) {
+        const patient = state.patients.find((p) => p.patientId === state.currentPatientId);
+        if (!patient) return;
+        const timeline = CommunicationEngine.buildTimeline(patient.forecast.expectedDate);
         const warningLine = patient.dataWarnings.length ? patient.dataWarnings.join("; ") : "none";
         document.getElementById("result").textContent =
-`predicted_los_days: ${forecast.los}
-confidence: ${forecast.confidence.toFixed(2)} (${forecast.confidenceLabel})
-expected_discharge_date: ${Helpers.fmt(forecast.expectedDate)}
+`patient_id: ${patient.patientId}
+predicted_los_days: ${patient.forecast.los}
+expected_discharge_date: ${Helpers.fmt(patient.forecast.expectedDate)}
 planned_departure_time: ${patient.plannedDepartureTime}
-discharge_threshold_time: ${patient.dischargeThresholdTime}
+assigned_bed: ${patient.bedId || "none"}
 threshold_risk_status: ${patient.thresholdRisk}
 billing_loss_risk: ${patient.billingLossRisk ? "yes" : "no"}
-data_quality_warnings: ${warningLine}
-early_coordination_flag: ${forecast.earlyFlag ? "yes" : "no"}`;
-      },
-      renderCommunication(patient, nurseScript, smsMessages) {
-        document.getElementById("nurseScript").textContent = nurseScript;
-        document.getElementById("smsMessages").textContent = smsMessages;
-      },
-      renderStakeholderFeed(patient) {
-        const confidenceClass = Helpers.riskClass(patient.forecast.confidenceLabel);
-        const thresholdClass = Helpers.riskClass(patient.thresholdRisk);
-        const blockerOwner = patient.blockerCategory === "none"
-          ? "No blocker owner required"
-          : CONFIG.alertOwners[`blocker_${patient.blockerCategory}`] || "Planning office";
-        const thresholdOwner = patient.thresholdRisk === "critical"
-          ? CONFIG.alertOwners.threshold_critical
-          : patient.thresholdRisk === "warning" || patient.thresholdRisk === "info"
-            ? CONFIG.alertOwners.threshold_warning
-            : "No threshold escalation";
+data_quality_warnings: ${warningLine}`;
+        document.getElementById("nurseScript").textContent = CommunicationEngine.buildNurseScript(patient, timeline);
+        document.getElementById("smsMessages").textContent = CommunicationEngine.buildSmsMessages(patient, timeline);
+        const blockerOwner = patient.blockerCategory === "none" ? "No blocker owner required" : (CONFIG.alertOwners[`blocker_${patient.blockerCategory}`] || "Planning office");
+        const thresholdOwner = patient.thresholdRisk === "critical" ? CONFIG.alertOwners.threshold_critical : patient.thresholdRisk !== "safe" ? CONFIG.alertOwners.threshold_warning : "No threshold escalation";
         document.getElementById("stakeholderFeed").innerHTML = `
-          <div class="feed-row"><strong>Patient (${patient.name})</strong><span>Target discharge: ${Helpers.fmt(patient.forecast.expectedDate)} ${patient.plannedDepartureTime}</span></div>
-          <div class="feed-row"><strong>Nurse team</strong><span class="${confidenceClass}">Confidence: ${patient.forecast.confidenceLabel.toUpperCase()}</span></div>
-          <div class="feed-row"><strong>Bed manager</strong><span>${patient.forecast.earlyFlag ? "Early coordination required" : "Routine tracking"}</span></div>
-          <div class="feed-row"><strong>Threshold monitor (${patient.dischargeThresholdTime})</strong><span class="${thresholdClass}">${patient.thresholdRisk.toUpperCase()} (${patient.minutesToThreshold} min buffer)</span></div>
+          <div class="feed-row"><strong>${patient.name}</strong><span>${patient.patientId} • ${patient.unitService}</span></div>
+          <div class="feed-row"><strong>Bed assignment</strong><span>${patient.bedId || "waiting bed"}</span></div>
           <div class="feed-row"><strong>Threshold owner</strong><span>${thresholdOwner}</span></div>
-          <div class="feed-row"><strong>Blocker owner</strong><span>${blockerOwner}</span></div>
-        `;
-      },
-      renderControlTower(summary) {
-        const occupancyHtml = summary.occupancyRows.map((r) =>
-          `<div class="feed-row"><strong>${r.unit}</strong><span>${r.current}/${r.capacity} (${r.rate}%)</span></div>`
-        ).join("");
-        const riskHtml = summary.thresholdAtRisk.length
-          ? summary.thresholdAtRisk.map((p) =>
-              `<div class="feed-row"><strong>${p.name}</strong><span class="${Helpers.riskClass(p.thresholdRisk)}">${p.thresholdRisk.toUpperCase()} @ ${p.plannedDepartureTime || "n/a"}</span></div>`
-            ).join("")
-          : `<div class="feed-row"><strong>Threshold risk queue</strong><span class="status-ok">No active at-risk case</span></div>`;
-        const blockerHtml = Object.keys(summary.blockerCounts).sort().map((k) =>
-          `<div class="feed-row"><strong>Blockers: ${k}</strong><span>${summary.blockerCounts[k]}</span></div>`
-        ).join("");
-        document.getElementById("controlTower").innerHTML = `
-          <div class="feed-row"><strong>Total tracked patients</strong><span>${summary.totalPatients}</span></div>
-          <div class="feed-row"><strong>After-threshold discharges</strong><span class="${summary.afterThreshold > 0 ? "status-risk" : "status-ok"}">${summary.afterThreshold}</span></div>
-          ${occupancyHtml}
-          ${blockerHtml}
-          ${riskHtml}
-        `;
-      },
-      renderTutorial(state) {
-        const patient = state.currentPatient;
-        if (!patient) return;
-        const lines = [
-          "Demo script (stakeholder presentation)",
-          `Active mode: ${state.roleMode}`,
-          `Active scenario: ${state.activeScenario}`,
-          "",
-          "Step 1) Start from baseline patient and run Compute & Sync.",
-          `Step 2) Show target discharge (${Helpers.fmt(patient.forecast.expectedDate)} ${patient.plannedDepartureTime}) and confidence (${patient.forecast.confidenceLabel}).`,
-          `Step 3) Show billing-threshold risk around ${patient.dischargeThresholdTime}: ${patient.thresholdRisk.toUpperCase()}.`,
-          "Step 4) Open Control Tower and explain occupancy + blocker distribution.",
-          "Step 5) Trigger a simulation preset (late transport / blocker / occupancy spike).",
-          "Step 6) Show owner mapping and escalation path directly in stakeholder feed.",
-          "Step 7) Conclude with KPI impact: threshold overrun prevention + coordination anticipation."
-        ];
-        document.getElementById("tutorialScript").textContent = lines.join("\n");
+          <div class="feed-row"><strong>Blocker owner</strong><span>${blockerOwner}</span></div>`;
+        const summary = ControlTowerEngine.compute(state);
+        const occ = summary.occupancyRows.map((r) => `<div class="feed-row"><strong>${r.service}</strong><span>${r.current}/${r.capacity} (${r.rate}%)</span></div>`).join("");
+        const risk = summary.thresholdAtRisk.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span class="${Helpers.riskClass(p.thresholdRisk)}">${p.thresholdRisk.toUpperCase()} • ${p.bedId || "no bed"}</span></div>`).join("") || `<div class="feed-row"><strong>Threshold queue</strong><span class="status-ok">No at-risk patient</span></div>`;
+        document.getElementById("controlTower").innerHTML = `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div><div class="feed-row"><strong>After-threshold risk count</strong><span class="${summary.afterThreshold ? "status-risk" : "status-ok"}">${summary.afterThreshold}</span></div>${occ}${risk}`;
+        document.getElementById("tutorialScript").textContent = [
+          "Demo flow:",
+          "1) Book/update patient from input panel.",
+          "2) Open Operations Matrix page.",
+          "3) Click occupied bed -> inspect patient details.",
+          "4) Discharge from matrix -> bed becomes free instantly.",
+          "5) Come back and book another patient -> bed re-occupied."
+        ].join("\n");
+        const rows = state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("");
+        document.getElementById("patientRegistry").innerHTML = rows || `<div class="feed-row"><strong>No patients</strong><span>Use Compute & Sync to create one</span></div>`;
+        document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
       }
     };
-
-    function renderFromState(state) {
-      if (!state.currentPatient) return;
-      const patient = state.currentPatient;
-      const timeline = CommunicationEngine.buildTimeline(patient.forecast.expectedDate);
-      UI.renderForecast(patient);
-      UI.renderCommunication(
-        patient,
-        CommunicationEngine.buildNurseScript(patient, timeline),
-        CommunicationEngine.buildSmsMessages(patient, timeline)
-      );
-      UI.renderStakeholderFeed(patient);
-      UI.renderControlTower(ControlTowerEngine.compute(state.patients));
-      UI.renderTutorial(state);
-      document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
-    }
 
     const THEME_KEY = "upstream-theme-mode";
     const LEGACY_THEME_KEY = "theme";
     let themeMode = "auto";
-
-    function resolveAutoTheme() {
-      const hour = new Date().getHours();
-      return (hour >= 7 && hour < 19) ? "light" : "dark";
-    }
-
-    function applyTheme(mode) {
-      const resolved = mode === "auto" ? resolveAutoTheme() : mode;
-      document.documentElement.setAttribute("data-theme", resolved);
-    }
-
-    function setTheme(theme) {
-      if (theme !== "dark" && theme !== "light" && theme !== "auto") return;
-      themeMode = theme;
-      localStorage.setItem(THEME_KEY, themeMode);
-      applyTheme(themeMode);
-    }
-
+    function resolveAutoTheme() { const hour = new Date().getHours(); return (hour >= 7 && hour < 19) ? "light" : "dark"; }
+    function applyTheme(mode) { document.documentElement.setAttribute("data-theme", mode === "auto" ? resolveAutoTheme() : mode); }
+    function setTheme(theme) { if (!["dark", "light", "auto"].includes(theme)) return; themeMode = theme; localStorage.setItem(THEME_KEY, themeMode); applyTheme(themeMode); }
     function loadTheme() {
       const saved = localStorage.getItem(THEME_KEY);
       const legacy = localStorage.getItem(LEGACY_THEME_KEY);
-      themeMode = saved || legacy || "auto";
-      if (themeMode !== "dark" && themeMode !== "light" && themeMode !== "auto") {
-        themeMode = "auto";
-      }
-      localStorage.setItem(THEME_KEY, themeMode);
-      localStorage.removeItem(LEGACY_THEME_KEY);
-      applyTheme(themeMode);
-      setInterval(() => {
-        if (themeMode === "auto") applyTheme("auto");
-      }, 60000);
+      themeMode = ["dark", "light", "auto"].includes(saved || legacy) ? (saved || legacy) : "auto";
+      localStorage.setItem(THEME_KEY, themeMode); localStorage.removeItem(LEGACY_THEME_KEY); applyTheme(themeMode);
+      setInterval(() => { if (themeMode === "auto") applyTheme("auto"); }, 60000);
     }
 
     function setCommTab(tab) {
@@ -831,37 +767,24 @@ early_coordination_flag: ${forecast.earlyFlag ? "yes" : "no"}`;
       const sms = document.getElementById("smsMessages");
       const nurseBtn = document.getElementById("tabNurse");
       const smsBtn = document.getElementById("tabSms");
-      if (tab === "nurse") {
-        nurse.style.display = "block";
-        sms.style.display = "none";
-        nurseBtn.classList.add("active");
-        smsBtn.classList.remove("active");
-      } else {
-        nurse.style.display = "none";
-        sms.style.display = "block";
-        nurseBtn.classList.remove("active");
-        smsBtn.classList.add("active");
+      if (tab === "nurse") { nurse.style.display = "block"; sms.style.display = "none"; nurseBtn.classList.add("active"); smsBtn.classList.remove("active"); }
+      else { nurse.style.display = "none"; sms.style.display = "block"; nurseBtn.classList.remove("active"); smsBtn.classList.add("active"); }
+    }
+
+    function runApp() { StateStore.setScenario("manual"); StateStore.upsertFromInput(UI.readInput()); }
+    function setRoleMode(mode) { StateStore.setRoleMode(mode === "nurse" ? "nurse" : "planner"); }
+    function runScenario(name) { ScenarioEngine.apply(name); StateStore.setScenario(name); StateStore.upsertFromInput(UI.readInput()); }
+
+    window.addEventListener("storage", (e) => {
+      if (e.key === STORAGE_KEY) {
+        StateStore.state = loadSharedState();
+        UI.render(StateStore.state);
       }
-    }
+    });
 
-    function runApp() {
-      StateStore.setScenario("manual");
-      StateStore.setCurrentFromInput(UI.readInput());
-    }
-
-    function setRoleMode(mode) {
-      const normalized = mode === "nurse" ? "nurse" : "planner";
-      StateStore.setRoleMode(normalized);
-    }
-
-    function runScenario(name) {
-      ScenarioEngine.apply(name);
-      StateStore.setScenario(name);
-      StateStore.setCurrentFromInput(UI.readInput());
-    }
-
-    StateStore.subscribe(renderFromState);
+    StateStore.subscribe((state) => UI.render(state));
     loadTheme();
+    document.getElementById("roleMode").value = StateStore.state.roleMode || "planner";
     setRoleMode(document.getElementById("roleMode").value);
     runApp();
   </script>

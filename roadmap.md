@@ -59,4 +59,7 @@ Start Phase 1 with concrete schema and shared state implementation plan.
 - [x] Added role-based mode selector (planner full / nurse light).
 - [x] Added 5 simulation presets (late transport, unresolved blocker, late medical validation, occupancy spike, missing critical data).
 - [x] Added tutorial/demo script panel for presentations.
+- [x] Added dedicated operations page with service/chamber/bed occupancy matrix and bed-click drilldown.
+- [x] Added discharge action from matrix to free occupied beds in real time.
+- [x] Added free-bed assignment flow from waiting patients directly in matrix view.
 - [ ] Next: refine KPI delta visualization for each simulation and mirror this in portfolio narrative.
