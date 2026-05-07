@@ -286,6 +286,7 @@
     <nav class="page-nav">
       <a class="active" href="index.html">Forecast & Coordination</a>
       <a href="operations.html">Operations Matrix</a>
+      <a href="tutorial.html">Tutorial</a>
     </nav>
 
     <section class="toolbar">
@@ -311,8 +312,8 @@
     <div class="grid">
       <section class="card" id="inputPanel">
         <h2>Forecast & Input Panel</h2>
-        <label>Procedure type</label>
-        <select id="procedure">
+        <label>Procedure type <span class="info" data-tip="Procedure drives default service and specialty mapping to keep the workflow coherent.">i</span></label>
+        <select id="procedure" onchange="syncProcedureMapping()">
           <option value="orthopedic">orthopedic</option>
           <option value="digestive">digestive</option>
           <option value="urology">urology</option>
@@ -325,8 +326,13 @@
         <label>Age</label>
         <input id="age" type="number" value="72" />
 
-        <label>Comorbidity score (0-4)</label>
-        <input id="comorbidity" type="number" min="0" max="4" value="2" />
+        <label>Severity index type <span class="info" data-tip="From stakeholder feedback: use severity framing (e.g., Charlson / Elixhauser style) rather than comorbidity-only wording.">i</span></label>
+        <select id="severityType">
+          <option value="charlson">charlson</option>
+          <option value="elixhauser">elixhauser</option>
+        </select>
+        <label>Severity score (0-15)</label>
+        <input id="severityScore" type="number" min="0" max="15" value="4" />
 
         <label>Social complexity</label>
         <select id="social">
@@ -348,7 +354,7 @@
         <div class="split">
           <div>
             <label>Unit / service</label>
-            <select id="unitService">
+            <select id="unitService" disabled>
               <option value="orthopedics">orthopedics</option>
               <option value="cardiology">cardiology</option>
               <option value="digestive">digestive</option>
@@ -358,7 +364,7 @@
           </div>
           <div>
             <label>Specialty</label>
-            <select id="specialty">
+            <select id="specialty" disabled>
               <option value="orthopedics">orthopedics</option>
               <option value="cardiology">cardiology</option>
               <option value="digestive">digestive</option>
@@ -398,8 +404,14 @@
         <label>Blocker detail (optional)</label>
         <input id="blockerDetail" type="text" value="" />
 
-        <button class="run" onclick="runApp('add')">Add patient & Sync</button>
-        <button class="run" style="margin-left:8px;" onclick="runApp('update')">Update existing ID</button>
+        <button id="btnAddSync" class="run" onclick="runApp('add')">Add patient & Sync</button>
+        <button id="btnUpdateById" class="run" style="margin-left:8px;" onclick="runApp('update')">Update existing ID</button>
+        <div id="editModePanel" class="hidden" style="margin-top:10px;">
+          <label><input id="recomputeLosOnEdit" type="checkbox" /> Recompute LOS on update</label>
+          <div class="small">If unchecked, LOS forecast is kept and only patient/flow fields are updated.</div>
+          <button class="run" type="button" onclick="confirmEditUpdate()">Confirm update</button>
+          <button class="run" type="button" style="margin-left:8px;" onclick="declineEditUpdate()">Decline update</button>
+        </div>
         <pre id="result" class="mono"></pre>
         <div>
           <span class="chip">Forecast engine</span>
@@ -456,6 +468,15 @@
     const STORAGE_KEY = "upstream-shared-state-v1";
     const CONFIG = {
       dischargeThresholdTime: "12:00",
+      procedureMapping: {
+        orthopedic: { unitService: "orthopedics", specialty: "orthopedics" },
+        digestive: { unitService: "digestive", specialty: "digestive" },
+        urology: { unitService: "urology", specialty: "urology" },
+        cardiovascular: { unitService: "cardiology", specialty: "cardiology" },
+        general_surgery: { unitService: "digestive", specialty: "general_surgery" },
+        emergency: { unitService: "emergency", specialty: "emergency" },
+        neurology: { unitService: "emergency", specialty: "neurology" }
+      },
       alertOwners: {
         threshold_warning: "Planner/Coordinator (primary), Bed manager (fallback)",
         threshold_critical: "Planner/Coordinator (primary), Physician on call (fallback)",
@@ -492,6 +513,14 @@
         return "status-ok";
       }
     };
+
+    function syncProcedureMapping() {
+      const procedure = document.getElementById("procedure").value;
+      const mapped = CONFIG.procedureMapping[procedure];
+      if (!mapped) return;
+      document.getElementById("unitService").value = mapped.unitService;
+      document.getElementById("specialty").value = mapped.specialty;
+    }
 
     function generateBeds() {
       const beds = [];
@@ -546,13 +575,13 @@
         let score = CONFIG.procedureBase[input.procedure] ?? 5.5;
         if (input.age >= 75) score += 1.0;
         else if (input.age >= 65) score += 0.5;
-        score += Math.min(input.comorbidity * 0.6, 3.0);
+        score += Math.min(input.severityScore * 0.22, 3.0);
         if (input.social) score += 1.5;
         if (input.postacute) score += 1.0;
         if (input.procedure === "emergency") score += 0.8;
         const los = Math.max(1, Math.round(score));
         let confidence = 0.92;
-        confidence -= Math.min(input.comorbidity * 0.08, 0.4);
+        confidence -= Math.min(input.severityScore * 0.03, 0.4);
         if (input.social) confidence -= 0.12;
         if (input.postacute) confidence -= 0.10;
         if (input.procedure === "emergency") confidence -= 0.08;
@@ -585,7 +614,8 @@
           procedureSubtype: input.procedureSubtype,
           bedPreference: input.bedType,
           age: input.age,
-          comorbidityScore: input.comorbidity,
+          severityType: input.severityType,
+          severityScore: input.severityScore,
           socialComplexity: input.social,
           postAcuteNeed: input.postacute,
           blockerCategory: input.blockerCategory,
@@ -631,6 +661,7 @@
 Patient: ${patient.name} (${patient.patientId})
 Service: ${patient.unitService} | Bed: ${patient.bedId || "pending"}
 Procedure: ${patient.procedureType} / ${patient.procedureSubtype}
+Severity: ${patient.severityType}=${patient.severityScore}
 Expected discharge: ${Helpers.fmt(patient.forecast.expectedDate)} at ${patient.plannedDepartureTime}
 Threshold (${patient.dischargeThresholdTime}) risk: ${patient.thresholdRisk.toUpperCase()}
 
@@ -676,6 +707,9 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         }
         return candidate;
       },
+      getPatientById(patientId) {
+        return this.state.patients.find((p) => p.patientId === patientId);
+      },
       upsertFromInput(input, options = { updateExisting: false }) {
         const forecast = ForecastEngine.compute(input);
         const requestedId = (input.patientId || "").trim() || `P-${Date.now()}`;
@@ -697,6 +731,24 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         this.state.currentPatientId = resolvedId;
         this.notify();
       },
+      updatePatientFromInput(patientId, input, options = { recomputeLos: true }) {
+        const existing = this.getPatientById(patientId);
+        if (!existing) return false;
+        const forecast = options.recomputeLos ? ForecastEngine.compute(input) : existing.forecast;
+        const incoming = DataContract.buildPatient({ ...input, patientId }, forecast, patientId);
+        if (existing.bedId) releaseBed(this.state, existing.bedId);
+        const bed = assignBed(this.state, incoming, incoming.bedPreference);
+        if (bed) incoming.bedId = bed.bedId;
+        else {
+          incoming.status = "waiting_bed";
+          incoming.dataWarnings.push("No free bed available in selected service");
+        }
+        const idx = this.state.patients.findIndex((p) => p.patientId === patientId);
+        this.state.patients[idx] = incoming;
+        this.state.currentPatientId = patientId;
+        this.notify();
+        return true;
+      },
       setRoleMode(roleMode) { this.state.roleMode = roleMode; this.notify(); },
       setScenario(name) { this.state.activeScenario = name; }
     };
@@ -706,7 +758,8 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         return {
           procedure: document.getElementById("procedure").value,
           age: Number(document.getElementById("age").value),
-          comorbidity: Number(document.getElementById("comorbidity").value),
+          severityType: document.getElementById("severityType").value,
+          severityScore: Number(document.getElementById("severityScore").value),
           social: document.getElementById("social").value === "true",
           postacute: document.getElementById("postacute").value === "true",
           patientName: document.getElementById("patientName").value.trim() || "Patient",
@@ -721,6 +774,7 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         };
       },
       render(state) {
+        document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
         const patient = state.patients.find((p) => p.patientId === state.currentPatientId);
         if (!patient) return;
         const timeline = CommunicationEngine.buildTimeline(patient.forecast.expectedDate);
@@ -728,6 +782,7 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         document.getElementById("result").textContent =
 `patient_id: ${patient.patientId}
 predicted_los_days: ${patient.forecast.los}
+severity_index: ${patient.severityType}=${patient.severityScore}
 expected_discharge_date: ${Helpers.fmt(patient.forecast.expectedDate)}
 planned_departure_time: ${patient.plannedDepartureTime}
 assigned_bed: ${patient.bedId || "none"}
@@ -757,7 +812,6 @@ data_quality_warnings: ${warningLine}`;
         ].join("\n");
         const rows = state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("");
         document.getElementById("patientRegistry").innerHTML = rows || `<div class="feed-row"><strong>No patients</strong><span>Use Compute & Sync to create one</span></div>`;
-        document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
       }
     };
 
@@ -784,9 +838,72 @@ data_quality_warnings: ${warningLine}`;
       else { nurse.style.display = "none"; sms.style.display = "block"; nurseBtn.classList.remove("active"); smsBtn.classList.add("active"); }
     }
 
+    let EDITING_PATIENT_ID = null;
+
+    function populateFormFromPatient(patient) {
+      document.getElementById("patientName").value = patient.name || "";
+      document.getElementById("patientId").value = patient.patientId || "";
+      document.getElementById("procedure").value = patient.procedureType || "orthopedic";
+      syncProcedureMapping();
+      if (patient.specialty && Array.from(document.getElementById("specialty").options).some((o) => o.value === patient.specialty)) {
+        document.getElementById("specialty").value = patient.specialty;
+      }
+      if (patient.unitService && Array.from(document.getElementById("unitService").options).some((o) => o.value === patient.unitService)) {
+        document.getElementById("unitService").value = patient.unitService;
+      }
+      document.getElementById("procedureSubtype").value = patient.procedureSubtype || "";
+      document.getElementById("severityType").value = patient.severityType || "charlson";
+      document.getElementById("severityScore").value = Number.isFinite(patient.severityScore) ? patient.severityScore : 4;
+      document.getElementById("age").value = Number.isFinite(patient.age) ? patient.age : 65;
+      document.getElementById("social").value = patient.socialComplexity ? "true" : "false";
+      document.getElementById("postacute").value = patient.postAcuteNeed ? "true" : "false";
+      document.getElementById("blockerCategory").value = patient.blockerCategory || "none";
+      document.getElementById("blockerDetail").value = patient.blockerDetail || "";
+      document.getElementById("departureTime").value = patient.plannedDepartureTime || "11:00";
+      document.getElementById("bedType").value = patient.bedPreference || "standard";
+    }
+
+    function enterEditMode(patientId) {
+      const patient = StateStore.getPatientById(patientId);
+      if (!patient) return;
+      EDITING_PATIENT_ID = patientId;
+      populateFormFromPatient(patient);
+      document.getElementById("patientId").readOnly = true;
+      document.getElementById("editModePanel").classList.remove("hidden");
+      document.getElementById("btnAddSync").classList.add("hidden");
+      document.getElementById("btnUpdateById").classList.add("hidden");
+    }
+
+    function declineEditUpdate() {
+      EDITING_PATIENT_ID = null;
+      document.getElementById("patientId").readOnly = false;
+      document.getElementById("editModePanel").classList.add("hidden");
+      document.getElementById("btnAddSync").classList.remove("hidden");
+      document.getElementById("btnUpdateById").classList.remove("hidden");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("editPatient");
+      window.history.replaceState({}, "", url.pathname);
+    }
+
+    function confirmEditUpdate() {
+      if (!EDITING_PATIENT_ID) return;
+      const recomputeLos = document.getElementById("recomputeLosOnEdit").checked;
+      StateStore.updatePatientFromInput(EDITING_PATIENT_ID, UI.readInput(), { recomputeLos });
+      declineEditUpdate();
+    }
+
     function runApp(mode = "add") {
       StateStore.setScenario("manual");
-      StateStore.upsertFromInput(UI.readInput(), { updateExisting: mode === "update" });
+      if (mode === "update") {
+        const id = document.getElementById("patientId").value.trim();
+        if (!id || !StateStore.getPatientById(id)) {
+          document.getElementById("result").textContent = "Update failed: patient ID not found. Use Add patient & Sync, or open edit from Operations Matrix.";
+          return;
+        }
+        StateStore.updatePatientFromInput(id, UI.readInput(), { recomputeLos: true });
+        return;
+      }
+      StateStore.upsertFromInput(UI.readInput(), { updateExisting: false });
     }
     function setRoleMode(mode) { StateStore.setRoleMode(mode === "nurse" ? "nurse" : "planner"); }
     function runScenario(name) {
@@ -804,9 +921,12 @@ data_quality_warnings: ${warningLine}`;
 
     StateStore.subscribe((state) => UI.render(state));
     loadTheme();
+    syncProcedureMapping();
     document.getElementById("roleMode").value = StateStore.state.roleMode || "planner";
     setRoleMode(document.getElementById("roleMode").value);
-    runApp("add");
+    UI.render(StateStore.state);
+    const requestedEditPatient = new URLSearchParams(window.location.search).get("editPatient");
+    if (requestedEditPatient) enterEditMode(requestedEditPatient);
   </script>
 </body>
 </html>

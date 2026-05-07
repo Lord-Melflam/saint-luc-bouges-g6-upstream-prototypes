@@ -33,6 +33,7 @@
     .page-nav a.active{color:#fff;border-color:transparent;background:linear-gradient(90deg,var(--accent),var(--accent2))}
     .layout{display:grid;grid-template-columns:2fr 1fr;gap:14px}
     .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px}
+    .filter-row{display:flex;gap:8px;margin-bottom:10px;align-items:center}
     .service{margin-bottom:14px}
     .service h3{margin:0 0 8px}
     .service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
@@ -65,10 +66,17 @@
     <nav class="page-nav">
       <a href="index.html">Forecast & Coordination</a>
       <a class="active" href="operations.html">Operations Matrix</a>
+      <a href="tutorial.html">Tutorial</a>
     </nav>
 
     <div class="layout">
       <section class="card">
+        <div class="filter-row">
+          <strong>Service view:</strong>
+          <select id="serviceView" onchange="renderMatrix()">
+            <option value="all">Global view (all services)</option>
+          </select>
+        </div>
         <div id="matrix"></div>
       </section>
       <aside class="card">
@@ -108,8 +116,9 @@
         byService[bed.service][bed.chamber] ||= [];
         byService[bed.service][bed.chamber].push(bed);
       }
+      const serviceFilter = document.getElementById("serviceView").value;
       const matrix = document.getElementById("matrix");
-      const serviceHtml = Object.keys(byService).sort().map((service) => {
+      const serviceHtml = Object.keys(byService).sort().filter((service) => serviceFilter === "all" || service === serviceFilter).map((service) => {
         const chambers = byService[service];
         const chamberHtml = Object.keys(chambers).sort().map((chamber) => {
           const beds = chambers[chamber].sort((a,b)=>a.number-b.number);
@@ -176,6 +185,8 @@
           <div class="row"><strong>Procedure</strong><span>${patient.procedureType} / ${patient.procedureSubtype || "n/a"}</span></div>
           <div class="row"><strong>Threshold risk</strong><span class="${statusClass(patient.thresholdRisk)}">${(patient.thresholdRisk || "safe").toUpperCase()}</span></div>
           <div class="row"><strong>Status</strong><span>${patient.status || "booked"}</span></div>
+          <button class="action" onclick="window.location.href='index.html?editPatient=${encodeURIComponent(patient.patientId)}'">Modify patient in Forecast page</button>
+          <div style="height:8px;"></div>
           <button class="action" onclick="dischargePatient('${patient.patientId}')">Discharge patient (free bed)</button>
         `;
       } else {
@@ -196,8 +207,17 @@
     }
 
     window.addEventListener("storage",(e)=>{if(e.key===STORAGE_KEY) renderMatrix();});
+
+    function initServiceFilter(){
+      const state = loadState();
+      const select = document.getElementById("serviceView");
+      const services = Array.from(new Set((state.beds || []).map((b) => b.service))).sort();
+      select.innerHTML = `<option value="all">Global view (all services)</option>` + services.map((s) => `<option value="${s}">${s}</option>`).join("");
+    }
+
     loadTheme();
     setInterval(()=>{if(themeMode==="auto")applyTheme("auto");},60000);
+    initServiceFilter();
     renderMatrix();
   </script>
 </body>
