@@ -929,13 +929,27 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
           p.severityScore === input.severityScore
         );
       },
-      upsertFromInput(input) {
+      upsertFromInput(input, options = {}) {
+        const allowDuplicateSuffix = options.allowDuplicateSuffix === true;
         const candidate = { ...input };
         const baseName = String(candidate.patientName || "Patient").trim() || "Patient";
+        let duplicate = this.findDuplicate(candidate);
+        if (duplicate && !allowDuplicateSuffix) {
+          document.getElementById("result").textContent =
+`Patient already exists.
+existing_patient_id: ${duplicate.patientId}
+existing_patient_name: ${duplicate.name}
+note: focus switched to that patient — every panel below is now showing it.
+to_create_a_different_person_with_the_same_clinical_fields: change the patient name (or any other identifying field) and click Add patient & Sync again.`;
+          this.state.currentPatientId = duplicate.patientId;
+          this.notify();
+          return false;
+        }
         let attempt = 1;
-        while (this.findDuplicate(candidate) && attempt < 100) {
+        while (duplicate && attempt < 100) {
           attempt += 1;
           candidate.patientName = `${baseName} (${attempt})`;
+          duplicate = this.findDuplicate(candidate);
         }
         const forecast = ForecastEngine.compute(candidate);
         const resolvedId = this.generatePatientId();
@@ -1499,7 +1513,7 @@ data_quality_warnings: ${warningLine}`;
     function runScenario(name) {
       ScenarioEngine.apply(name);
       StateStore.setScenario(name);
-      StateStore.upsertFromInput(UI.readInput());
+      StateStore.upsertFromInput(UI.readInput(), { allowDuplicateSuffix: true });
     }
 
     function resetSharedState() {

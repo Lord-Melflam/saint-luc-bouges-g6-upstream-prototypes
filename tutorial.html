@@ -35,7 +35,7 @@
       </div>
     </div>
     <h1>How to use the Upstream Prototype</h1>
-    <p class="muted">This page explains workflow, features, roles, and how the two operational pages connect.</p>
+    <p class="muted">This page explains the workflow, the data model, and how every panel reacts to the patient you have selected.</p>
     <nav class="page-nav">
       <a href="index.html">Forecast & Coordination</a>
       <a href="operations.html">Operations Matrix</a>
@@ -45,103 +45,128 @@
     <section class="card">
       <h2>1) End-to-end workflow</h2>
       <ol>
-        <li>Create patient in <strong>Forecast & Coordination</strong>.</li>
-        <li>System generates patient ID automatically and computes LOS/threshold risk.</li>
-        <li>Bed assignment tries preferred bed type in selected service.</li>
-        <li>If impossible, patient is queued with reason + timestamp.</li>
-        <li>Open <strong>Operations Matrix</strong> to inspect beds, queue, and reassign/discharge.</li>
-        <li>Edit from matrix if needed (confirm/decline update, optional LOS recompute).</li>
+        <li>Open <strong>Forecast & Coordination</strong> and either fill the Forecast & Input Panel or click <strong>Seed demo data</strong> to bootstrap four example patients.</li>
+        <li>Click <strong>Add patient & Sync</strong>. The system generates the patient ID (<code>P-LIVE-NNNN</code>), computes LOS + confidence, and tries to place the patient in a bed.</li>
+        <li>If a preferred bed is unavailable in the selected service, the patient is queued (with reason + timestamp) instead of failing.</li>
+        <li>Click any patient row in <strong>Patient registry</strong>, the <strong>Queue</strong>, the <strong>Threshold-at-risk</strong> list, or the <strong>Nurse station</strong> to focus that patient. Every patient-aware panel below updates: Communication Hub, Stakeholder Feed, Tutorial & Demo script, Control Tower focus.</li>
+        <li>Open <strong>Operations Matrix</strong> to inspect beds, the queue, and to discharge or reassign.</li>
+        <li>From an occupied bed, <strong>Modify patient in Forecast page</strong> sends you back to the Forecast page in edit mode, where you can confirm or decline the update with an optional LOS recompute.</li>
       </ol>
     </section>
 
     <section class="card">
       <h2>2) Forecast inputs explained</h2>
       <ul>
-        <li><strong>Procedure type</strong>: drives default service + specialty mapping.</li>
-        <li><strong>Severity index type</strong>: charlson or elixhauser framing.</li>
-        <li><strong>Severity score</strong>: 0–15 severity intensity.</li>
-        <li><strong>Gender</strong>: used in LOS computation.</li>
-        <li><strong>Primary blocker</strong>: medical/admin/transport/family/logistics/none.</li>
+        <li><strong>Procedure type</strong> — drives an automatic mapping to <em>service</em> and <em>specialty</em> (those fields are read-only and follow the procedure choice).</li>
+        <li><strong>Severity index type</strong> — Charlson or Elixhauser framing (replaces the old comorbidity wording, per stakeholder feedback).</li>
+        <li><strong>Severity score</strong> — 0–15 intensity. Influences both LOS and confidence.</li>
+        <li><strong>Age, gender, social complexity, post-acute need</strong> — modify the LOS prediction and the confidence label (high / medium / low).</li>
+        <li><strong>Primary blocker</strong> — medical / admin / transport / family / logistics / none. Routes to a different stakeholder owner in the alert mapping.</li>
+        <li><strong>Planned departure time (D0)</strong> — measured against the discharge cutoff (12:00). Yields <code>safe</code> / <code>info</code> / <code>warning</code> / <code>critical</code> threshold risk.</li>
         <li><strong>Bed type + policy</strong>:
-          - strict: queue if preferred bed unavailable,
-          - flexible: assign alternative type if possible.</li>
-        <li><strong>IDAG / DMG</strong>: optional grouping placeholders from stakeholder notes.</li>
+          <ul>
+            <li><strong>strict</strong> — queue if the preferred bed type is not free in the service;</li>
+            <li><strong>flexible</strong> — accept an alternative bed type and record a data-quality warning.</li>
+          </ul>
+        </li>
+        <li><strong>IDAG / DMG</strong> — optional grouping placeholders from stakeholder notes; informational only.</li>
       </ul>
     </section>
 
     <section class="card">
-      <h2>3) Outputs explained</h2>
-      <p class="muted">Example forecast output:</p>
+      <h2>3) Adding patients & duplicate detection</h2>
+      <ul>
+        <li>Patient IDs are <strong>system-generated</strong>. There is no manual ID input.</li>
+        <li>If you click <strong>Add patient & Sync</strong> with form fields that already match an active patient (name, age, gender, procedure type/subtype, service, severity index/score), the prototype <strong>does not create a duplicate</strong>. It tells you which existing patient matched and switches focus to it.</li>
+        <li>To create a different person who happens to share clinical fields, change the patient name (or any other identifying field) and re-submit.</li>
+        <li><strong>Simulation presets</strong> are the explicit exception: they intentionally spawn a fresh stress event each click, even when the inputs collide. The duplicate name is auto-suffixed (<code>(2)</code>, <code>(3)</code>, …) so the same scenario can be repeated.</li>
+        <li><strong>Reset state</strong> wipes the prototype's <code>localStorage</code> after a confirmation. Use it to start a clean demo or to recover from a bad state.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>4) Outputs explained</h2>
+      <p class="muted">Example forecast output for a focused patient:</p>
       <pre>patient_id: P-LIVE-0007
+patient_name: Patient X
 predicted_los_days: 5
 severity_index: charlson=4
 gender: female
 expected_discharge_date: 2026-05-12
 planned_departure_time: 11:00
-assigned_bed: none
-threshold_risk_status: info
+assigned_bed: ORTH-O1-B1
+threshold_risk_status: safe
 billing_loss_risk: no
-data_quality_warnings: Preferred type unavailable in selected service</pre>
-      <p class="muted">Meaning:</p>
+data_quality_warnings: none</pre>
       <ul>
-        <li><strong>assigned_bed: none</strong> means patient is queued, not lost.</li>
-        <li><strong>threshold_risk_status</strong> indicates distance to discharge billing cutoff.</li>
-        <li><strong>data_quality_warnings</strong> indicates operational assignment constraints.</li>
+        <li><strong>assigned_bed: none</strong> — patient is queued, not rejected. Open Operations Matrix to assign manually.</li>
+        <li><strong>threshold_risk_status</strong> — distance to the 12:00 discharge cutoff. <code>warning</code> &lt; 30 min before cutoff, <code>critical</code> after cutoff.</li>
+        <li><strong>billing_loss_risk: yes</strong> — planned departure is after the cutoff, so the day's bed-night may not be reimbursable.</li>
+        <li><strong>data_quality_warnings</strong> — operational facts (preferred bed type unavailable, missing subtype, blocker without detail).</li>
       </ul>
-      <p class="muted">Nurse script and SMS panels are operational communication templates derived from same patient state.</p>
+      <p class="muted">The Communication Hub renders a nurse handover script and an SMS timeline (D-2 / D-1 / D0) from the same patient state.</p>
     </section>
 
     <section class="card">
-      <h2>4) Operations Matrix usage</h2>
+      <h2>5) Selection drives every panel</h2>
       <ul>
-        <li>Use <strong>Global view</strong> to see all services; use service filter for local focus.</li>
-        <li>Click a bed tile to inspect patient + risk details.</li>
-        <li>For occupied bed:
-          - discharge (frees bed),
-          - modify patient (opens forecast edit mode).</li>
-        <li>For free bed:
-          - assign a queued/waiting patient directly to this bed.</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <h2>5) Role modes</h2>
-      <ul>
-        <li><strong>Planner:</strong> full data-entry and coordination controls.</li>
-        <li><strong>Nurse:</strong> a read-first board with active patients, per-unit filters, and the selected patient's monitoring snapshot.</li>
+        <li>The <strong>selection pill</strong> at the top of the Forecast page shows the focused patient (id, name, unit, bed, threshold) with a <em>Deselect</em> button.</li>
+        <li>Clicking any patient row in the Patient registry, Queue, Threshold-at-risk list, or Nurse station sets that patient as the focus — every patient-aware panel updates in lockstep:
+          <ul>
+            <li><strong>Communication Hub</strong> — nurse script, SMS, comm windows.</li>
+            <li><strong>Stakeholder Update Feed</strong> — bed assignment, threshold owner, blocker owner, comm windows.</li>
+            <li><strong>Upstream Control Tower</strong> — global occupancy + a focus subsection (queue position, bed status).</li>
+            <li><strong>Tutorial & Demo script</strong> — switches from a generic flow to a per-patient cheat sheet.</li>
+          </ul>
+        </li>
+        <li>Adding a patient automatically focuses the new patient. Editing a patient (via the Operations Matrix handoff) also focuses it.</li>
       </ul>
     </section>
 
     <section class="card">
-      <h2>6) Nurse station</h2>
+      <h2>6) Operations Matrix usage</h2>
       <ul>
-        <li>Starts with active patients instead of an empty screen.</li>
-        <li>Use <strong>Unit filter</strong> for per-service monitoring or <strong>All units</strong> for a global list.</li>
-        <li>Select any row to refresh the nurse script, LOS, risk, and next action output.</li>
-        <li>Useful at login for a shift handover: who is active, who is waiting, and who is at risk.</li>
+        <li><strong>Service view</strong> filter — global by default; switching to a service narrows both the bed matrix and the occupancy chart at the top.</li>
+        <li>Click any bed tile to inspect details on the right.</li>
+        <li>Occupied bed: <em>Modify patient in Forecast page</em> (opens edit mode) or <em>Discharge patient</em> (frees the bed instantly).</li>
+        <li>Free bed: pick a queued / unassigned patient and assign directly.</li>
+        <li>The <strong>Occupancy overview</strong> chart shows percent occupancy per service (or for the focused service when filtered), with proper Y-axis ticks (0/25/50/75/100%) and color thresholds (green &lt; 50%, yellow ≤ 75%, red &gt; 75%).</li>
       </ul>
     </section>
 
     <section class="card">
-      <h2>7) Simulation presets</h2>
-      <p>Use preset buttons on Forecast page to inject realistic stress scenarios quickly:</p>
+      <h2>7) Role modes & Nurse station</h2>
       <ul>
-        <li>Late transport</li>
-        <li>Unresolved blocker</li>
-        <li>Late medical validation</li>
-        <li>Occupancy spike</li>
-        <li>Missing critical data</li>
+        <li><strong>Planner</strong> — full Forecast & Input Panel + every coordination card.</li>
+        <li><strong>Nurse</strong> — the input panel is hidden; the page becomes a read-first board.</li>
+        <li>The <strong>Nurse station</strong> stat chips show active patients, unit load, queue depth, and threshold alerts.</li>
+        <li>Filters: unit (per-service or all), scope (active or all). The patient list and dropdown both honour the filters.</li>
+        <li>Clicking a patient on the left selects it. If the selected patient is filtered out, the right-hand detail panel says so instead of silently switching.</li>
       </ul>
-      <p class="muted">Recommended presentation flow: baseline patient -> trigger preset -> observe queue/occupancy/risk changes in matrix.</p>
     </section>
 
     <section class="card">
-      <h2>8) Monitoring panel</h2>
+      <h2>8) Simulation presets</h2>
+      <p>Stress-test the dashboard with one click:</p>
       <ul>
-        <li>Shows current occupancy and forecast occupancy horizon with axis labels and point values.</li>
-        <li>Supports service-specific or global perspective.</li>
-        <li>Forecast horizon can be longer than current LOS, and the chart rescales automatically.</li>
-        <li>Updates whenever patient creation/update/discharge changes state.</li>
+        <li><strong>Late transport</strong> — pickup delayed; threshold risk rising.</li>
+        <li><strong>Unresolved blocker</strong> — admin/medical paperwork pending past D0.</li>
+        <li><strong>Late medical validation</strong> — physician sign-off slips after the cutoff.</li>
+        <li><strong>Occupancy spike</strong> — adds emergency-service load.</li>
+        <li><strong>Missing critical data</strong> — flags data-quality warnings instead of failing silently.</li>
+      </ul>
+      <p class="muted">Each click spawns a fresh patient (auto-suffixed name) so you can stack multiple stress events. Recommended demo flow: baseline patient → trigger preset → observe queue / occupancy / risk changes in the Operations Matrix.</p>
+    </section>
+
+    <section class="card">
+      <h2>9) Monitoring panel (forecast occupancy)</h2>
+      <ul>
+        <li>Now <strong>full page width</strong> on the Forecast page so X-axis labels and point values never overlap.</li>
+        <li><strong>Y axis</strong> — active-patient count with <em>nice-tick</em> spacing (0/2/4/… or 0/5/10/…).</li>
+        <li><strong>X axis</strong> — days from today; ~8 labels max, rotated, formatted <code>D5 04-17</code>.</li>
+        <li>Every data point has a count label permanently visible — no hover required.</li>
+        <li><strong>Focus service</strong> filter narrows the line to one service; <strong>Forecast horizon</strong> rescales the X axis (default = current max LOS in the registry).</li>
+        <li>Canvas is rendered with <code>devicePixelRatio</code> scaling, so lines and text stay crisp on high-DPI displays.</li>
       </ul>
     </section>
   </div>
