@@ -266,7 +266,20 @@
       border-color: transparent;
       background: linear-gradient(90deg, var(--accent), var(--accent2));
     }
-  </style>
+    .monitor-controls,.nurse-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;align-items:end}
+    .monitor-controls label,.nurse-controls label{display:block;margin-bottom:6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    .monitor-controls select,.monitor-controls input,.nurse-controls select,.nurse-controls input{width:100%;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);padding:10px}
+    .nurse-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0 14px}
+    .stat-chip{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,.04);display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .stat-chip strong{font-size:18px;color:#fff}
+    .nurse-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:12px;margin-top:12px}
+    .nurse-list,.nurse-detail{border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.03);min-height:220px}
+    .nurse-item{width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:8px 0;background:rgba(255,255,255,.02);color:var(--text);cursor:pointer;display:flex;flex-direction:column;gap:4px}
+    .nurse-item.selected{border-color:transparent;background:linear-gradient(90deg,rgba(77,191,140,.22),rgba(210,138,58,.18));box-shadow:0 8px 20px rgba(0,0,0,.18)}
+    .detail-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+    .detail-block{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,.03);margin-top:10px}
+    .detail-block pre{white-space:pre-wrap;margin:8px 0 0}
+    </style>
 </head>
 <body>
   <div class="container">
@@ -484,10 +497,46 @@
 
       <section class="card">
         <h2>Monitoring panel (occupancy current + forecast)</h2>
-        <label>Focus service</label>
-        <select id="monitorService" onchange="UI.render(StateStore.state)"></select>
-        <canvas id="monitorChart" width="760" height="260" style="width:100%;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15);"></canvas>
+        <div class="monitor-controls">
+          <div>
+            <label>Focus service</label>
+            <select id="monitorService" onchange="UI.render(StateStore.state)"></select>
+          </div>
+          <div>
+            <label>Forecast horizon (days)</label>
+            <input id="monitorHorizon" type="number" min="1" max="365" value="" oninput="UI.render(StateStore.state)" />
+          </div>
+        </div>
+        <canvas id="monitorChart" width="1100" height="360" style="width:100%;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15);"></canvas>
         <div id="monitorLegend" class="small"></div>
+      </section>
+
+      <section class="card nurse-board">
+        <h2>Nurse station
+          <span class="info" data-tip="A nurse-first view: active patients, per-unit filters, quick monitoring outputs, and a selected-patient snapshot.">i</span>
+        </h2>
+        <div class="nurse-toolbar" id="nurseStats"></div>
+        <div class="nurse-controls">
+          <div>
+            <label>Unit filter</label>
+            <select id="nurseUnitFilter" onchange="StateStore.setNurseFocusUnit(this.value)"></select>
+          </div>
+          <div>
+            <label>Patient scope</label>
+            <select id="nurseScopeFilter" onchange="StateStore.setNurseScope(this.value)">
+              <option value="active">Active patients</option>
+              <option value="all">All patients</option>
+            </select>
+          </div>
+          <div>
+            <label>Selected patient</label>
+            <select id="nursePatientSelect" onchange="StateStore.setNurseFocusPatient(this.value)"></select>
+          </div>
+        </div>
+        <div class="nurse-grid">
+          <div class="nurse-list" id="nursePatientList"></div>
+          <div class="nurse-detail" id="nursePatientDetail"></div>
+        </div>
       </section>
     </div>
 
@@ -583,6 +632,9 @@
         currentPatientId: null,
         roleMode: "planner",
         activeScenario: "manual",
+        nurseFocusUnit: "all",
+        nurseScope: "active",
+        nurseFocusPatientId: null,
         meta: { nextPatientSeq: 1 }
       };
       try {
@@ -594,6 +646,9 @@
         parsed.waitingQueue = Array.isArray(parsed.waitingQueue) ? parsed.waitingQueue : [];
         parsed.roleMode = parsed.roleMode === "nurse" ? "nurse" : "planner";
         parsed.activeScenario = parsed.activeScenario || "manual";
+        parsed.nurseFocusUnit = parsed.nurseFocusUnit || "all";
+        parsed.nurseScope = parsed.nurseScope === "all" ? "all" : "active";
+        parsed.nurseFocusPatientId = parsed.nurseFocusPatientId || null;
         parsed.meta = parsed.meta && Number.isFinite(parsed.meta.nextPatientSeq)
           ? parsed.meta
           : { nextPatientSeq: 1 };
@@ -902,7 +957,10 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         return true;
       },
       setRoleMode(roleMode) { this.state.roleMode = roleMode; this.notify(); },
-      setScenario(name) { this.state.activeScenario = name; }
+      setScenario(name) { this.state.activeScenario = name; this.notify(); },
+      setNurseFocusUnit(unit) { this.state.nurseFocusUnit = unit || "all"; this.notify(); },
+      setNurseScope(scope) { this.state.nurseScope = scope === "all" ? "all" : "active"; this.notify(); },
+      setNurseFocusPatient(patientId) { this.state.nurseFocusPatientId = patientId || null; this.notify(); }
     };
 
     const UI = {
@@ -935,6 +993,7 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         const queueRows = state.waitingQueue.map((q) => `<div class="feed-row"><strong>${q.patientId}</strong><span>${q.service} • ${q.requestedBedType} • ${q.reason} • ${q.timestamp}</span></div>`).join("");
         document.getElementById("queuePanel").innerHTML = queueRows || `<div class="feed-row"><strong>No queued patient</strong><span>All assignable patients have a bed</span></div>`;
         this.renderMonitoring(state, summary);
+        this.renderNurseBoard(state, summary);
         if (!patient) {
           document.getElementById("result").textContent = "No active selected patient yet. Use Add patient & Sync.";
           document.getElementById("stakeholderFeed").innerHTML = `<div class="feed-row"><strong>Stakeholder feed</strong><span>Awaiting patient creation</span></div>`;
@@ -982,41 +1041,157 @@ data_quality_warnings: ${warningLine}`;
       },
       renderMonitoring(state, summary) {
         const select = document.getElementById("monitorService");
-        if (select.options.length === 0) {
-          const services = summary.occupancyRows.map((r) => r.service);
-          select.innerHTML = `<option value="all">all services</option>` + services.map((s) => `<option value="${s}">${s}</option>`).join("");
-        }
+        const services = summary.occupancyRows.map((r) => r.service);
+        const currentService = select.value || "all";
+        select.innerHTML = `<option value="all">all services</option>` + services.map((s) => `<option value="${s}">${s}</option>`).join("");
+        select.value = services.includes(currentService) ? currentService : "all";
         const service = select.value || "all";
-        const series = service === "all"
-          ? summary.globalForecast
-          : (summary.globalForecast.map((x, i) => ({ day: x.day, count: (summary.serviceForecast[service] && summary.serviceForecast[service][i]) || 0 })));
+        const horizonInput = document.getElementById("monitorHorizon");
+        const activePatients = state.patients.filter((p) => p.status !== "discharged");
+        const maxLos = Math.max(1, ...activePatients.map((p) => Number.isFinite(p?.forecast?.los) ? p.forecast.los : 0));
+        if (!horizonInput.value) horizonInput.value = String(maxLos);
+        const horizon = Math.max(1, Number(horizonInput.value) || maxLos);
+        const series = [];
+        for (let d = 0; d <= horizon; d++) {
+          const day = new Date(Date.now() + d * 86400000);
+          const dayKey = Helpers.fmt(day);
+          const count = activePatients.filter((p) => {
+            if (service !== "all" && p.unitService !== service) return false;
+            if (!p.forecast?.expectedDate) return false;
+            return day <= new Date(p.forecast.expectedDate);
+          }).length;
+          series.push({ day: dayKey, count });
+        }
         const canvas = document.getElementById("monitorChart");
         const ctx = canvas.getContext("2d");
         const w = canvas.width, h = canvas.height;
         ctx.clearRect(0, 0, w, h);
-        ctx.strokeStyle = "rgba(180,200,190,0.3)";
-        ctx.strokeRect(40, 20, w - 60, h - 50);
+        const left = 64, right = 24, top = 24, bottom = 48;
+        const plotW = w - left - right;
+        const plotH = h - top - bottom;
         const maxY = Math.max(1, ...series.map((s) => s.count));
+        const yTicks = Math.min(6, maxY);
+        const yStep = Math.max(1, Math.ceil(maxY / yTicks));
+        ctx.strokeStyle = "rgba(180,200,190,0.22)";
+        ctx.fillStyle = "#cdd8cf";
+        ctx.font = "12px Inter";
+        for (let y = 0; y <= maxY; y += yStep) {
+          const py = top + plotH * (1 - y / maxY);
+          ctx.beginPath();
+          ctx.moveTo(left, py);
+          ctx.lineTo(w - right, py);
+          ctx.stroke();
+          ctx.fillText(String(y), 12, py + 4);
+        }
+        ctx.strokeStyle = "rgba(180,200,190,0.6)";
+        ctx.beginPath();
+        ctx.moveTo(left, top);
+        ctx.lineTo(left, h - bottom);
+        ctx.lineTo(w - right, h - bottom);
+        ctx.stroke();
         const points = series.map((s, i) => {
-          const x = 40 + (i * (w - 60)) / Math.max(1, series.length - 1);
-          const y = 20 + (h - 50) * (1 - s.count / maxY);
+          const x = left + (i * plotW) / Math.max(1, series.length - 1);
+          const y = top + plotH * (1 - s.count / maxY);
           return { x, y, c: s.count };
         });
         ctx.beginPath();
         points.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
         ctx.strokeStyle = "#4dbf8c";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.stroke();
-        points.forEach((p) => { ctx.fillStyle = "#d28a3a"; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); });
+        const gradient = ctx.createLinearGradient(0, top, 0, h - bottom);
+        gradient.addColorStop(0, "rgba(77,191,140,.35)");
+        gradient.addColorStop(1, "rgba(77,191,140,0.02)");
+        ctx.lineTo(points[points.length - 1]?.x || left, h - bottom);
+        ctx.lineTo(left, h - bottom);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        points.forEach((p, i) => {
+          ctx.fillStyle = i === points.length - 1 ? "#ffcc66" : "#d28a3a";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#eef3ef";
+          ctx.fillText(String(p.c), p.x - 4, p.y - 8);
+          if (i % Math.max(1, Math.floor(points.length / 6)) === 0 || i === points.length - 1) {
+            ctx.save();
+            ctx.translate(p.x - 10, h - bottom + 16);
+            ctx.rotate(-Math.PI / 6);
+            ctx.fillStyle = "#cdd8cf";
+            ctx.fillText(`D${i} ${safelyTruncateLabel(series[i].day)}`, 0, 0);
+            ctx.restore();
+          }
+        });
         ctx.fillStyle = "#cdd8cf";
         ctx.font = "12px Inter";
-        ctx.fillText(`Forecast occupancy (${service})`, 44, 16);
-        ctx.fillText(`max=${maxY}`, w - 100, 16);
+        ctx.fillText(`Forecast occupancy (${service})`, left, 16);
+        ctx.fillText(`horizon=${horizon}d`, w - 120, 16);
         const currentOcc = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.current : 0), 0);
         const currentCap = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.capacity : 0), 0);
-        document.getElementById("monitorLegend").textContent = `Current occupancy: ${currentOcc}/${currentCap} • Queue: ${state.waitingQueue.length} • Forecast horizon: ${series.length - 1} day(s)`;
+        document.getElementById("monitorLegend").textContent = `Current occupancy: ${currentOcc}/${currentCap} • Queue: ${state.waitingQueue.length} • Max LOS: ${maxLos} day(s) • Horizon: ${horizon} day(s)`;
+      },
+      renderNurseBoard(state, summary) {
+        const unitSelect = document.getElementById("nurseUnitFilter");
+        const scopeSelect = document.getElementById("nurseScopeFilter");
+        const patientSelect = document.getElementById("nursePatientSelect");
+        const units = ["all", ...Array.from(new Set(state.patients.map((p) => p.unitService))).sort()];
+        const currentUnit = state.nurseFocusUnit || "all";
+        unitSelect.innerHTML = units.map((u) => `<option value="${u}">${u === "all" ? "All units" : u}</option>`).join("");
+        unitSelect.value = units.includes(currentUnit) ? currentUnit : "all";
+        scopeSelect.value = state.nurseScope || "active";
+        const eligible = state.patients.filter((p) => p.status !== "discharged" || scopeSelect.value === "all");
+        const filtered = eligible.filter((p) => unitSelect.value === "all" || p.unitService === unitSelect.value);
+        if (!filtered.length) {
+          patientSelect.innerHTML = `<option value="">No patients</option>`;
+        } else {
+          patientSelect.innerHTML = filtered.map((p) => `<option value="${p.patientId}">${p.patientId} • ${p.name} • ${p.unitService}</option>`).join("");
+        }
+        const selectedId = filtered.some((p) => p.patientId === state.nurseFocusPatientId)
+          ? state.nurseFocusPatientId
+          : (filtered[0] ? filtered[0].patientId : "");
+        patientSelect.value = selectedId || "";
+        const selected = state.patients.find((p) => p.patientId === selectedId);
+        const activeCount = state.patients.filter((p) => p.status !== "discharged").length;
+        const unitCount = unitSelect.value === "all" ? activeCount : state.patients.filter((p) => p.unitService === unitSelect.value && p.status !== "discharged").length;
+        const queueCount = state.waitingQueue.length;
+        const atRiskCount = summary.thresholdAtRisk.length;
+        document.getElementById("nurseStats").innerHTML = `
+          <div class="stat-chip">Active patients <strong>${activeCount}</strong></div>
+          <div class="stat-chip">Unit load <strong>${unitCount}</strong></div>
+          <div class="stat-chip">Waiting queue <strong>${queueCount}</strong></div>
+          <div class="stat-chip">Threshold alerts <strong>${atRiskCount}</strong></div>`;
+        const list = filtered.map((p) => `
+          <button class="nurse-item ${p.patientId === selectedId ? "selected" : ""}" type="button" onclick="StateStore.setNurseFocusPatient('${p.patientId}')">
+            <strong>${p.name}</strong>
+            <span>${p.patientId} • ${p.unitService} • ${p.status || "booked"}</span>
+          </button>
+        `).join("");
+        document.getElementById("nursePatientList").innerHTML = list || `<div class="feed-row"><strong>No matching patient</strong><span>Adjust unit/scope filters</span></div>`;
+        if (!selected) {
+          document.getElementById("nursePatientDetail").innerHTML = `
+            <div class="feed-row"><strong>Nothing selected</strong><span>Choose a patient to inspect monitoring outputs.</span></div>`;
+          return;
+        }
+        const timeline = CommunicationEngine.buildTimeline(selected.forecast.expectedDate);
+        document.getElementById("nursePatientDetail").innerHTML = `
+          <div class="detail-title">Selected patient</div>
+          <div class="feed-row"><strong>${selected.name}</strong><span>${selected.patientId} • ${selected.unitService}</span></div>
+          <div class="feed-row"><strong>Bed / status</strong><span>${selected.bedId || "waiting bed"} • ${selected.status || "booked"}</span></div>
+          <div class="feed-row"><strong>Risk</strong><span class="${Helpers.riskClass(selected.thresholdRisk)}">${selected.thresholdRisk.toUpperCase()} • ${selected.billingLossRisk ? "after cutoff" : "before cutoff"}</span></div>
+          <div class="feed-row"><strong>LOS</strong><span>${selected.forecast.los} days • confidence ${Math.round(selected.forecast.confidence * 100)}%</span></div>
+          <div class="feed-row"><strong>Next nurse action</strong><span>${selected.dataWarnings.length ? selected.dataWarnings[0] : "Monitor discharge readiness and bed availability"}</span></div>
+          <div class="detail-block">
+            <strong>Nurse script</strong>
+            <pre class="mono">${CommunicationEngine.buildNurseScript(selected, timeline)}</pre>
+          </div>
+        `;
       }
     };
+
+    function safelyTruncateLabel(label) {
+      return String(label).slice(5);
+    }
 
     const THEME_KEY = "upstream-theme-mode";
     const LEGACY_THEME_KEY = "theme";

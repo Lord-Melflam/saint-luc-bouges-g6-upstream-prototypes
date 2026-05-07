@@ -108,12 +108,22 @@ data_quality_warnings: Preferred type unavailable in selected service</pre>
       <h2>5) Role modes</h2>
       <ul>
         <li><strong>Planner:</strong> full data-entry and coordination controls.</li>
-        <li><strong>Nurse:</strong> lightweight monitoring view; planner-heavy panel hidden.</li>
+        <li><strong>Nurse:</strong> a read-first board with active patients, per-unit filters, and the selected patient's monitoring snapshot.</li>
       </ul>
     </section>
 
     <section class="card">
-      <h2>6) Simulation presets</h2>
+      <h2>6) Nurse station</h2>
+      <ul>
+        <li>Starts with active patients instead of an empty screen.</li>
+        <li>Use <strong>Unit filter</strong> for per-service monitoring or <strong>All units</strong> for a global list.</li>
+        <li>Select any row to refresh the nurse script, LOS, risk, and next action output.</li>
+        <li>Useful at login for a shift handover: who is active, who is waiting, and who is at risk.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>7) Simulation presets</h2>
       <p>Use preset buttons on Forecast page to inject realistic stress scenarios quickly:</p>
       <ul>
         <li>Late transport</li>
@@ -126,10 +136,11 @@ data_quality_warnings: Preferred type unavailable in selected service</pre>
     </section>
 
     <section class="card">
-      <h2>7) Monitoring panel</h2>
+      <h2>8) Monitoring panel</h2>
       <ul>
-        <li>Shows current occupancy and forecast occupancy horizon.</li>
+        <li>Shows current occupancy and forecast occupancy horizon with axis labels and point values.</li>
         <li>Supports service-specific or global perspective.</li>
+        <li>Forecast horizon can be longer than current LOS, and the chart rescales automatically.</li>
         <li>Updates whenever patient creation/update/discharge changes state.</li>
       </ul>
     </section>
