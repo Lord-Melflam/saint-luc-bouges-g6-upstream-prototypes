@@ -81,6 +81,7 @@
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 16px;
     }
+    .card.full-row { grid-column: 1 / -1; }
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -507,7 +508,7 @@
         <div id="queuePanel"></div>
       </section>
 
-      <section class="card">
+      <section class="card full-row">
         <h2>Monitoring panel (occupancy current + forecast)</h2>
         <div class="monitor-controls">
           <div>
@@ -523,7 +524,7 @@
         <div id="monitorLegend" class="small"></div>
       </section>
 
-      <section class="card nurse-board">
+      <section class="card nurse-board full-row">
         <h2>Nurse station
           <span class="info" data-tip="A nurse-first view: active patients, per-unit filters, quick monitoring outputs, and a selected-patient snapshot.">i</span>
         </h2>
