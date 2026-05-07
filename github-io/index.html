@@ -279,6 +279,15 @@
     .detail-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
     .detail-block{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,.03);margin-top:10px}
     .detail-block pre{white-space:pre-wrap;margin:8px 0 0}
+    .selection-pill{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--border);border-radius:14px;padding:10px 14px;background:linear-gradient(90deg,rgba(77,191,140,.10),rgba(210,138,58,.10));margin:0 0 14px;font-size:14px}
+    .selection-pill .none{color:var(--muted)}
+    .selection-pill button{border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);border-radius:8px;padding:4px 8px;cursor:pointer}
+    .selection-pill .pill-id{font-family:ui-monospace,monospace;background:rgba(255,255,255,.08);padding:2px 8px;border-radius:6px}
+    .registry-item{display:flex;justify-content:space-between;gap:10px;width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;background:rgba(255,255,255,.02);color:var(--text);cursor:pointer;font-size:13px}
+    .registry-item:hover{background:rgba(255,255,255,.06)}
+    .registry-item.selected{border-color:transparent;background:linear-gradient(90deg,rgba(77,191,140,.22),rgba(210,138,58,.18))}
+    .run.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--border)}
+    .run.secondary:hover{background:rgba(255,255,255,.10)}
     </style>
 </head>
 <body>
@@ -301,6 +310,8 @@
       <a href="operations.html">Operations Matrix</a>
       <a href="tutorial.html">Tutorial</a>
     </nav>
+
+    <div id="selectionPill" class="selection-pill" role="status" aria-live="polite"></div>
 
     <section class="toolbar">
       <div class="card" style="padding:12px;">
@@ -438,8 +449,9 @@
         <label>Blocker detail (optional)</label>
         <input id="blockerDetail" type="text" value="" />
 
-        <button id="btnAddSync" class="run" onclick="runApp('add')">Add patient & Sync</button>
-        <button id="btnUpdateById" class="run" style="margin-left:8px;" onclick="runApp('update')">Update existing ID</button>
+        <button id="btnAddSync" class="run" onclick="runApp()">Add patient & Sync</button>
+        <button class="run secondary" type="button" style="margin-left:8px;" onclick="seedDemoData()" title="Add 4 example patients across services">Seed demo data</button>
+        <button class="run secondary" type="button" style="margin-left:8px;" onclick="resetSharedState()" title="Wipe all simulated state">Reset state</button>
         <div id="editModePanel" class="hidden" style="margin-top:10px;">
           <label><input id="recomputeLosOnEdit" type="checkbox" /> Recompute LOS on update</label>
           <div class="small">If unchecked, LOS forecast is kept and only patient/flow fields are updated.</div>
@@ -530,7 +542,7 @@
           </div>
           <div>
             <label>Selected patient</label>
-            <select id="nursePatientSelect" onchange="StateStore.setNurseFocusPatient(this.value)"></select>
+            <select id="nursePatientSelect" onchange="StateStore.selectPatient(this.value)"></select>
           </div>
         </div>
         <div class="nurse-grid">
@@ -584,7 +596,8 @@
 
     const Helpers = {
       clamp(value, min, max) { return Math.max(min, Math.min(max, value)); },
-      fmt(d) { return d.toISOString().slice(0, 10); },
+      toDate(d) { return d instanceof Date ? d : new Date(d); },
+      fmt(d) { const dt = d instanceof Date ? d : new Date(d); return Number.isFinite(dt.getTime()) ? dt.toISOString().slice(0, 10) : "—"; },
       nowIso() { return new Date().toISOString(); },
       timeToMinutes(time) {
         const [h, m] = (time || "00:00").split(":").map(Number);
@@ -594,6 +607,12 @@
         if (level === "critical" || level === "low") return "status-risk";
         if (level === "warning" || level === "info" || level === "medium") return "status-med";
         return "status-ok";
+      },
+      cssVar(name, fallback) {
+        try {
+          const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+          return v || fallback;
+        } catch (_) { return fallback; }
       }
     };
 
@@ -624,6 +643,11 @@
       return beds;
     }
 
+    function isHealthyPatient(p) {
+      return !!(p && p.patientId && p.forecast && p.forecast.expectedDate
+        && Number.isFinite(Helpers.toDate(p.forecast.expectedDate).getTime()));
+    }
+
     function loadSharedState() {
       const fallback = {
         patients: [],
@@ -634,24 +658,29 @@
         activeScenario: "manual",
         nurseFocusUnit: "all",
         nurseScope: "active",
-        nurseFocusPatientId: null,
         meta: { nextPatientSeq: 1 }
       };
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return fallback;
         const parsed = JSON.parse(raw);
-        parsed.patients = Array.isArray(parsed.patients) ? parsed.patients : [];
+        const cleanPatients = (Array.isArray(parsed.patients) ? parsed.patients : []).filter(isHealthyPatient);
+        parsed.patients = cleanPatients;
         parsed.beds = Array.isArray(parsed.beds) && parsed.beds.length ? parsed.beds : generateBeds();
-        parsed.waitingQueue = Array.isArray(parsed.waitingQueue) ? parsed.waitingQueue : [];
+        const liveIds = new Set(cleanPatients.map((p) => p.patientId));
+        for (const bed of parsed.beds) {
+          if (bed.occupiedBy && !liveIds.has(bed.occupiedBy)) bed.occupiedBy = null;
+        }
+        parsed.waitingQueue = (Array.isArray(parsed.waitingQueue) ? parsed.waitingQueue : [])
+          .filter((q) => q && liveIds.has(q.patientId));
         parsed.roleMode = parsed.roleMode === "nurse" ? "nurse" : "planner";
         parsed.activeScenario = parsed.activeScenario || "manual";
         parsed.nurseFocusUnit = parsed.nurseFocusUnit || "all";
         parsed.nurseScope = parsed.nurseScope === "all" ? "all" : "active";
-        parsed.nurseFocusPatientId = parsed.nurseFocusPatientId || null;
+        parsed.currentPatientId = liveIds.has(parsed.currentPatientId) ? parsed.currentPatientId : null;
         parsed.meta = parsed.meta && Number.isFinite(parsed.meta.nextPatientSeq)
           ? parsed.meta
-          : { nextPatientSeq: 1 };
+          : { nextPatientSeq: cleanPatients.length + 1 };
         return parsed;
       } catch (_) {}
       return fallback;
@@ -831,7 +860,8 @@
 
     const CommunicationEngine = {
       buildTimeline(expectedDate) {
-        return { d2: new Date(expectedDate.getTime() - 2 * 86400000), d1: new Date(expectedDate.getTime() - 86400000), d0: expectedDate };
+        const d0 = Helpers.toDate(expectedDate);
+        return { d2: new Date(d0.getTime() - 2 * 86400000), d1: new Date(d0.getTime() - 86400000), d0 };
       },
       buildNurseScript(patient, timeline) {
         return `Nurse script (handover-ready)
@@ -898,16 +928,17 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
           p.severityScore === input.severityScore
         );
       },
-      upsertFromInput(input, options = { updateExisting: false }) {
-        const duplicate = this.findDuplicate(input);
-        if (duplicate) {
-          const msg = `Duplicate patient data detected (existing ${duplicate.patientId}).`;
-          document.getElementById("result").textContent = msg;
-          return false;
+      upsertFromInput(input) {
+        const candidate = { ...input };
+        const baseName = String(candidate.patientName || "Patient").trim() || "Patient";
+        let attempt = 1;
+        while (this.findDuplicate(candidate) && attempt < 100) {
+          attempt += 1;
+          candidate.patientName = `${baseName} (${attempt})`;
         }
-        const forecast = ForecastEngine.compute(input);
+        const forecast = ForecastEngine.compute(candidate);
         const resolvedId = this.generatePatientId();
-        const incoming = DataContract.buildPatient(input, forecast, resolvedId);
+        const incoming = DataContract.buildPatient(candidate, forecast, resolvedId);
         const assignment = tryAssignBed(this.state, incoming, incoming.bedPreference, incoming.bedPolicy);
         if (assignment.bed) {
           incoming.bedId = assignment.bed.bedId;
@@ -960,7 +991,10 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
       setScenario(name) { this.state.activeScenario = name; this.notify(); },
       setNurseFocusUnit(unit) { this.state.nurseFocusUnit = unit || "all"; this.notify(); },
       setNurseScope(scope) { this.state.nurseScope = scope === "all" ? "all" : "active"; this.notify(); },
-      setNurseFocusPatient(patientId) { this.state.nurseFocusPatientId = patientId || null; this.notify(); }
+      selectPatient(patientId) {
+        this.state.currentPatientId = patientId && this.getPatientById(patientId) ? patientId : null;
+        this.notify();
+      }
     };
 
     const UI = {
@@ -986,27 +1020,119 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
           bedPolicy: document.getElementById("bedPolicy").value
         };
       },
+      renderSelectionPill(state, patient) {
+        const pill = document.getElementById("selectionPill");
+        if (!pill) return;
+        if (patient) {
+          pill.innerHTML = `
+            <span>Selected:</span>
+            <span class="pill-id">${patient.patientId}</span>
+            <strong>${patient.name}</strong>
+            <span>• ${patient.unitService}</span>
+            <span>• bed ${patient.bedId || "—"}</span>
+            <span class="${Helpers.riskClass(patient.thresholdRisk)}">${(patient.thresholdRisk || "safe").toUpperCase()}</span>
+            <button type="button" onclick="StateStore.selectPatient(null)">Deselect ✕</button>`;
+        } else {
+          pill.innerHTML = `<span class="none">No patient selected — click a row in the Patient registry or Nurse station to drive every panel below.</span>`;
+        }
+      },
+      renderPatientRegistry(state) {
+        const host = document.getElementById("patientRegistry");
+        if (!host) return;
+        if (!state.patients.length) {
+          host.innerHTML = `<div class="feed-row"><strong>No patients</strong><span>Use Add patient & Sync (or Seed demo data) to create one</span></div>`;
+          return;
+        }
+        host.innerHTML = state.patients.map((p) => {
+          const sel = p.patientId === state.currentPatientId ? " selected" : "";
+          const status = p.bedId || p.status || "booked";
+          return `<button type="button" class="registry-item${sel}" onclick="StateStore.selectPatient('${p.patientId}')">
+            <span><strong>${p.patientId}</strong> • ${p.name}</span>
+            <span class="muted">${p.unitService} • ${status}</span>
+          </button>`;
+        }).join("");
+      },
+      renderQueue(state) {
+        const queueRows = state.waitingQueue.map((q) => {
+          const sel = q.patientId === state.currentPatientId ? " selected" : "";
+          return `<button type="button" class="registry-item${sel}" onclick="StateStore.selectPatient('${q.patientId}')">
+            <span><strong>${q.patientId}</strong> • ${q.service}</span>
+            <span class="muted">${q.requestedBedType} • ${q.reason}</span>
+          </button>`;
+        }).join("");
+        document.getElementById("queuePanel").innerHTML = queueRows || `<div class="feed-row"><strong>No queued patient</strong><span>All assignable patients have a bed</span></div>`;
+      },
+      renderControlTower(state, summary, patient) {
+        const occ = summary.occupancyRows.map((r) => `<div class="feed-row"><strong>${r.service}</strong><span>${r.current}/${r.capacity} (${r.rate}%)</span></div>`).join("");
+        const risk = summary.thresholdAtRisk.map((p) => {
+          const sel = p.patientId === state.currentPatientId ? " selected" : "";
+          return `<button type="button" class="registry-item${sel}" onclick="StateStore.selectPatient('${p.patientId}')">
+            <span><strong>${p.patientId}</strong></span>
+            <span class="${Helpers.riskClass(p.thresholdRisk)}">${p.thresholdRisk.toUpperCase()} • ${p.bedId || "no bed"}</span>
+          </button>`;
+        }).join("") || `<div class="feed-row"><strong>Threshold queue</strong><span class="status-ok">No at-risk patient</span></div>`;
+        const queuePos = patient ? state.waitingQueue.findIndex((q) => q.patientId === patient.patientId) : -1;
+        const focus = patient
+          ? `<div class="feed-row"><strong>Focus patient</strong><span>${patient.patientId} • ${patient.name}</span></div>
+             <div class="feed-row"><strong>Focus bed status</strong><span>${patient.bedId ? "assigned to " + patient.bedId : (queuePos >= 0 ? `queued (position ${queuePos + 1}/${state.waitingQueue.length})` : "not assigned")}</span></div>`
+          : "";
+        document.getElementById("controlTower").innerHTML =
+          `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div>
+           <div class="feed-row"><strong>After-threshold risk count</strong><span class="${summary.afterThreshold ? "status-risk" : "status-ok"}">${summary.afterThreshold}</span></div>
+           ${focus}${occ}${risk}`;
+      },
+      renderTutorialScript(state, patient) {
+        const host = document.getElementById("tutorialScript");
+        if (!patient) {
+          host.textContent = [
+            "Demo flow (no patient selected):",
+            "1) Click 'Seed demo data' to bootstrap, or 'Add patient & Sync' for one custom case.",
+            "2) Click a row in 'Patient registry snapshot' to make it the focus.",
+            "3) The selected patient drives Communication Hub, Stakeholder Feed, and Control Tower focus.",
+            "4) Open Operations Matrix to inspect beds, discharge, or assign queued patients.",
+            "5) Use 'Modify patient in Forecast page' to round-trip the edit flow."
+          ].join("\n");
+          return;
+        }
+        const queuePos = state.waitingQueue.findIndex((q) => q.patientId === patient.patientId);
+        const bedLine = patient.bedId
+          ? `Bed ${patient.bedId} (service ${patient.unitService}). Discharge from Operations to free it.`
+          : (queuePos >= 0 ? `Queued (position ${queuePos + 1}). Reason: ${state.waitingQueue[queuePos].reason}.` : "Not assigned to a bed yet.");
+        host.textContent = [
+          `Demo flow for ${patient.patientId} — ${patient.name}:`,
+          `1) Predicted LOS: ${patient.forecast.los} day(s) (confidence ${patient.forecast.confidenceLabel}).`,
+          `2) Threshold risk: ${(patient.thresholdRisk || "safe").toUpperCase()} — planned departure ${patient.plannedDepartureTime}.`,
+          `3) ${bedLine}`,
+          `4) Blocker: ${patient.blockerCategory}${patient.blockerDetail ? " — " + patient.blockerDetail : ""}.`,
+          `5) Open Operations Matrix → click the bed (or any free bed) → assign / discharge.`,
+          `6) From there, 'Modify patient in Forecast page' rehydrates this form for editing.`
+        ].join("\n");
+      },
       render(state) {
         document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
-        const patient = state.patients.find((p) => p.patientId === state.currentPatientId);
+        const patient = state.patients.find((p) => p.patientId === state.currentPatientId) || null;
         const summary = ControlTowerEngine.compute(state);
-        const queueRows = state.waitingQueue.map((q) => `<div class="feed-row"><strong>${q.patientId}</strong><span>${q.service} • ${q.requestedBedType} • ${q.reason} • ${q.timestamp}</span></div>`).join("");
-        document.getElementById("queuePanel").innerHTML = queueRows || `<div class="feed-row"><strong>No queued patient</strong><span>All assignable patients have a bed</span></div>`;
+        this.renderSelectionPill(state, patient);
+        this.renderQueue(state);
         this.renderMonitoring(state, summary);
         this.renderNurseBoard(state, summary);
+        this.renderPatientRegistry(state);
+        this.renderControlTower(state, summary, patient);
+        this.renderTutorialScript(state, patient);
         if (!patient) {
-          document.getElementById("result").textContent = "No active selected patient yet. Use Add patient & Sync.";
-          document.getElementById("stakeholderFeed").innerHTML = `<div class="feed-row"><strong>Stakeholder feed</strong><span>Awaiting patient creation</span></div>`;
-          document.getElementById("controlTower").innerHTML = `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div>`;
-          document.getElementById("patientRegistry").innerHTML = state.patients.length
-            ? state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("")
-            : `<div class="feed-row"><strong>No patients</strong><span>Use Add patient & Sync to create one</span></div>`;
+          document.getElementById("result").textContent = state.patients.length
+            ? "No patient selected. Click a row in the Patient registry to focus one."
+            : "No patients yet. Use Add patient & Sync (or Seed demo data).";
+          document.getElementById("nurseScript").textContent = "";
+          document.getElementById("smsMessages").textContent = "";
+          document.getElementById("stakeholderFeed").innerHTML = `<div class="feed-row"><strong>Stakeholder feed</strong><span>Select a patient to populate this view.</span></div>`;
           return;
         }
         const timeline = CommunicationEngine.buildTimeline(patient.forecast.expectedDate);
         const warningLine = patient.dataWarnings.length ? patient.dataWarnings.join("; ") : "none";
         document.getElementById("result").textContent =
 `patient_id: ${patient.patientId}
+patient_name: ${patient.name}
 predicted_los_days: ${patient.forecast.los}
 severity_index: ${patient.severityType}=${patient.severityScore}
 gender: ${patient.gender}
@@ -1024,20 +1150,8 @@ data_quality_warnings: ${warningLine}`;
           <div class="feed-row"><strong>${patient.name}</strong><span>${patient.patientId} • ${patient.unitService}</span></div>
           <div class="feed-row"><strong>Bed assignment</strong><span>${patient.bedId || "waiting bed"}</span></div>
           <div class="feed-row"><strong>Threshold owner</strong><span>${thresholdOwner}</span></div>
-          <div class="feed-row"><strong>Blocker owner</strong><span>${blockerOwner}</span></div>`;
-        const occ = summary.occupancyRows.map((r) => `<div class="feed-row"><strong>${r.service}</strong><span>${r.current}/${r.capacity} (${r.rate}%)</span></div>`).join("");
-        const risk = summary.thresholdAtRisk.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span class="${Helpers.riskClass(p.thresholdRisk)}">${p.thresholdRisk.toUpperCase()} • ${p.bedId || "no bed"}</span></div>`).join("") || `<div class="feed-row"><strong>Threshold queue</strong><span class="status-ok">No at-risk patient</span></div>`;
-        document.getElementById("controlTower").innerHTML = `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div><div class="feed-row"><strong>After-threshold risk count</strong><span class="${summary.afterThreshold ? "status-risk" : "status-ok"}">${summary.afterThreshold}</span></div>${occ}${risk}`;
-        document.getElementById("tutorialScript").textContent = [
-          "Demo flow:",
-          "1) Book/update patient from input panel.",
-          "2) Open Operations Matrix page.",
-          "3) Click occupied bed -> inspect patient details.",
-          "4) Discharge from matrix -> bed becomes free instantly.",
-          "5) Come back and book another patient -> bed re-occupied."
-        ].join("\n");
-        const rows = state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("");
-        document.getElementById("patientRegistry").innerHTML = rows || `<div class="feed-row"><strong>No patients</strong><span>Use Compute & Sync to create one</span></div>`;
+          <div class="feed-row"><strong>Blocker owner</strong><span>${blockerOwner}</span></div>
+          <div class="feed-row"><strong>Communication windows</strong><span>D-2 ${Helpers.fmt(timeline.d2)} • D-1 ${Helpers.fmt(timeline.d1)} • D0 ${Helpers.fmt(timeline.d0)}</span></div>`;
       },
       renderMonitoring(state, summary) {
         const select = document.getElementById("monitorService");
@@ -1126,7 +1240,16 @@ data_quality_warnings: ${warningLine}`;
         ctx.fillStyle = "#cdd8cf";
         ctx.font = "12px Inter";
         ctx.fillText(`Forecast occupancy (${service})`, left, 16);
-        ctx.fillText(`horizon=${horizon}d`, w - 120, 16);
+        ctx.fillText(`horizon = ${horizon} day(s)`, w - 160, 16);
+        ctx.save();
+        ctx.translate(20, top + plotH / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = "center";
+        ctx.fillText("active patients", 0, 0);
+        ctx.restore();
+        ctx.textAlign = "center";
+        ctx.fillText("days from today", left + plotW / 2, h - 6);
+        ctx.textAlign = "start";
         const currentOcc = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.current : 0), 0);
         const currentCap = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.capacity : 0), 0);
         document.getElementById("monitorLegend").textContent = `Current occupancy: ${currentOcc}/${currentCap} • Queue: ${state.waitingQueue.length} • Max LOS: ${maxLos} day(s) • Horizon: ${horizon} day(s)`;
@@ -1142,16 +1265,15 @@ data_quality_warnings: ${warningLine}`;
         scopeSelect.value = state.nurseScope || "active";
         const eligible = state.patients.filter((p) => p.status !== "discharged" || scopeSelect.value === "all");
         const filtered = eligible.filter((p) => unitSelect.value === "all" || p.unitService === unitSelect.value);
+        const selected = state.patients.find((p) => p.patientId === state.currentPatientId) || null;
+        const visibleSelected = selected && filtered.includes(selected) ? selected : null;
         if (!filtered.length) {
           patientSelect.innerHTML = `<option value="">No patients</option>`;
+          patientSelect.value = "";
         } else {
-          patientSelect.innerHTML = filtered.map((p) => `<option value="${p.patientId}">${p.patientId} • ${p.name} • ${p.unitService}</option>`).join("");
+          patientSelect.innerHTML = `<option value="">— pick a patient —</option>` + filtered.map((p) => `<option value="${p.patientId}">${p.patientId} • ${p.name} • ${p.unitService}</option>`).join("");
+          patientSelect.value = visibleSelected ? visibleSelected.patientId : "";
         }
-        const selectedId = filtered.some((p) => p.patientId === state.nurseFocusPatientId)
-          ? state.nurseFocusPatientId
-          : (filtered[0] ? filtered[0].patientId : "");
-        patientSelect.value = selectedId || "";
-        const selected = state.patients.find((p) => p.patientId === selectedId);
         const activeCount = state.patients.filter((p) => p.status !== "discharged").length;
         const unitCount = unitSelect.value === "all" ? activeCount : state.patients.filter((p) => p.unitService === unitSelect.value && p.status !== "discharged").length;
         const queueCount = state.waitingQueue.length;
@@ -1162,28 +1284,30 @@ data_quality_warnings: ${warningLine}`;
           <div class="stat-chip">Waiting queue <strong>${queueCount}</strong></div>
           <div class="stat-chip">Threshold alerts <strong>${atRiskCount}</strong></div>`;
         const list = filtered.map((p) => `
-          <button class="nurse-item ${p.patientId === selectedId ? "selected" : ""}" type="button" onclick="StateStore.setNurseFocusPatient('${p.patientId}')">
+          <button class="nurse-item ${p.patientId === state.currentPatientId ? "selected" : ""}" type="button" onclick="StateStore.selectPatient('${p.patientId}')">
             <strong>${p.name}</strong>
-            <span>${p.patientId} • ${p.unitService} • ${p.status || "booked"}</span>
+            <span>${p.patientId} • ${p.unitService} • ${p.status || "booked"} • bed ${p.bedId || "—"}</span>
           </button>
         `).join("");
         document.getElementById("nursePatientList").innerHTML = list || `<div class="feed-row"><strong>No matching patient</strong><span>Adjust unit/scope filters</span></div>`;
-        if (!selected) {
-          document.getElementById("nursePatientDetail").innerHTML = `
-            <div class="feed-row"><strong>Nothing selected</strong><span>Choose a patient to inspect monitoring outputs.</span></div>`;
+        const detailHost = document.getElementById("nursePatientDetail");
+        if (!visibleSelected) {
+          detailHost.innerHTML = selected
+            ? `<div class="feed-row"><strong>Selected patient hidden</strong><span>${selected.patientId} (${selected.unitService}) is filtered out — change Unit / Scope to see it.</span></div>`
+            : `<div class="feed-row"><strong>Nothing selected</strong><span>Click a patient on the left to inspect monitoring outputs.</span></div>`;
           return;
         }
-        const timeline = CommunicationEngine.buildTimeline(selected.forecast.expectedDate);
-        document.getElementById("nursePatientDetail").innerHTML = `
+        const timeline = CommunicationEngine.buildTimeline(visibleSelected.forecast.expectedDate);
+        detailHost.innerHTML = `
           <div class="detail-title">Selected patient</div>
-          <div class="feed-row"><strong>${selected.name}</strong><span>${selected.patientId} • ${selected.unitService}</span></div>
-          <div class="feed-row"><strong>Bed / status</strong><span>${selected.bedId || "waiting bed"} • ${selected.status || "booked"}</span></div>
-          <div class="feed-row"><strong>Risk</strong><span class="${Helpers.riskClass(selected.thresholdRisk)}">${selected.thresholdRisk.toUpperCase()} • ${selected.billingLossRisk ? "after cutoff" : "before cutoff"}</span></div>
-          <div class="feed-row"><strong>LOS</strong><span>${selected.forecast.los} days • confidence ${Math.round(selected.forecast.confidence * 100)}%</span></div>
-          <div class="feed-row"><strong>Next nurse action</strong><span>${selected.dataWarnings.length ? selected.dataWarnings[0] : "Monitor discharge readiness and bed availability"}</span></div>
+          <div class="feed-row"><strong>${visibleSelected.name}</strong><span>${visibleSelected.patientId} • ${visibleSelected.unitService}</span></div>
+          <div class="feed-row"><strong>Bed / status</strong><span>${visibleSelected.bedId || "waiting bed"} • ${visibleSelected.status || "booked"}</span></div>
+          <div class="feed-row"><strong>Risk</strong><span class="${Helpers.riskClass(visibleSelected.thresholdRisk)}">${visibleSelected.thresholdRisk.toUpperCase()} • ${visibleSelected.billingLossRisk ? "after cutoff" : "before cutoff"}</span></div>
+          <div class="feed-row"><strong>LOS</strong><span>${visibleSelected.forecast.los} days • confidence ${Math.round(visibleSelected.forecast.confidence * 100)}%</span></div>
+          <div class="feed-row"><strong>Next nurse action</strong><span>${visibleSelected.dataWarnings.length ? visibleSelected.dataWarnings[0] : "Monitor discharge readiness and bed availability"}</span></div>
           <div class="detail-block">
             <strong>Nurse script</strong>
-            <pre class="mono">${CommunicationEngine.buildNurseScript(selected, timeline)}</pre>
+            <pre class="mono">${CommunicationEngine.buildNurseScript(visibleSelected, timeline)}</pre>
           </div>
         `;
       }
@@ -1248,17 +1372,16 @@ data_quality_warnings: ${warningLine}`;
       const patient = StateStore.getPatientById(patientId);
       if (!patient) return;
       EDITING_PATIENT_ID = patientId;
+      StateStore.selectPatient(patientId);
       populateFormFromPatient(patient);
       document.getElementById("editModePanel").classList.remove("hidden");
       document.getElementById("btnAddSync").classList.add("hidden");
-      document.getElementById("btnUpdateById").classList.add("hidden");
     }
 
     function declineEditUpdate() {
       EDITING_PATIENT_ID = null;
       document.getElementById("editModePanel").classList.add("hidden");
       document.getElementById("btnAddSync").classList.remove("hidden");
-      document.getElementById("btnUpdateById").classList.remove("hidden");
       const url = new URL(window.location.href);
       url.searchParams.delete("editPatient");
       window.history.replaceState({}, "", url.pathname);
@@ -1271,23 +1394,65 @@ data_quality_warnings: ${warningLine}`;
       declineEditUpdate();
     }
 
-    function runApp(mode = "add") {
+    function runApp() {
       StateStore.setScenario("manual");
-      if (mode === "update") {
-        if (!EDITING_PATIENT_ID || !StateStore.getPatientById(EDITING_PATIENT_ID)) {
-          document.getElementById("result").textContent = "Update failed: patient ID not found. Use Add patient & Sync, or open edit from Operations Matrix.";
-          return;
-        }
-        StateStore.updatePatientFromInput(EDITING_PATIENT_ID, UI.readInput(), { recomputeLos: true });
-        return;
-      }
-      StateStore.upsertFromInput(UI.readInput(), { updateExisting: false });
+      StateStore.upsertFromInput(UI.readInput());
     }
     function setRoleMode(mode) { StateStore.setRoleMode(mode === "nurse" ? "nurse" : "planner"); }
     function runScenario(name) {
       ScenarioEngine.apply(name);
       StateStore.setScenario(name);
-      StateStore.upsertFromInput(UI.readInput(), { updateExisting: false });
+      StateStore.upsertFromInput(UI.readInput());
+    }
+
+    function resetSharedState() {
+      if (!confirm("Reset all simulated patients, beds, and queue? This wipes localStorage for this prototype.")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      StateStore.state = loadSharedState();
+      EDITING_PATIENT_ID = null;
+      const editPanel = document.getElementById("editModePanel");
+      if (editPanel) editPanel.classList.add("hidden");
+      const addBtn = document.getElementById("btnAddSync");
+      if (addBtn) addBtn.classList.remove("hidden");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("editPatient");
+      window.history.replaceState({}, "", url.pathname);
+      StateStore.notify();
+    }
+
+    const DEMO_SEEDS = [
+      { patientName: "Demo Anna", procedure: "orthopedic", age: 78, severityScore: 6, social: true, postacute: true, blockerCategory: "transport", blockerDetail: "Family pickup tentative", departureTime: "12:30", bedType: "premium", bedPolicy: "flexible" },
+      { patientName: "Demo Boris", procedure: "cardiovascular", age: 70, severityScore: 8, social: false, postacute: true, blockerCategory: "medical", blockerDetail: "Cardiac rehab intake pending", departureTime: "11:15", bedType: "monitoring", bedPolicy: "strict" },
+      { patientName: "Demo Chloé", procedure: "digestive", age: 55, severityScore: 2, social: false, postacute: false, blockerCategory: "none", blockerDetail: "", departureTime: "10:45", bedType: "standard", bedPolicy: "strict" },
+      { patientName: "Demo Driss", procedure: "emergency", age: 64, severityScore: 5, social: true, postacute: false, blockerCategory: "admin", blockerDetail: "Prescription pending", departureTime: "12:50", bedType: "monitoring", bedPolicy: "flexible" }
+    ];
+
+    function seedDemoData() {
+      for (const seed of DEMO_SEEDS) {
+        const procedure = seed.procedure;
+        const mapped = CONFIG.procedureMapping[procedure] || { unitService: "orthopedics", specialty: "orthopedics" };
+        const input = {
+          procedure,
+          age: seed.age,
+          gender: "female",
+          severityType: "charlson",
+          severityScore: seed.severityScore,
+          social: seed.social,
+          postacute: seed.postacute,
+          patientName: seed.patientName,
+          unitService: mapped.unitService,
+          specialty: mapped.specialty,
+          procedureSubtype: "demo procedure",
+          idagCode: "",
+          dmgGroup: "",
+          blockerCategory: seed.blockerCategory,
+          blockerDetail: seed.blockerDetail,
+          departureTime: seed.departureTime,
+          bedType: seed.bedType,
+          bedPolicy: seed.bedPolicy
+        };
+        StateStore.upsertFromInput(input);
+      }
     }
 
     window.addEventListener("storage", (e) => {
