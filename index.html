@@ -519,7 +519,7 @@
             <input id="monitorHorizon" type="number" min="1" max="365" value="" oninput="UI.render(StateStore.state)" />
           </div>
         </div>
-        <canvas id="monitorChart" width="1100" height="360" style="width:100%;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15);"></canvas>
+        <canvas id="monitorChart" width="1100" height="380" style="width:100%;height:380px;margin-top:10px;border:1px solid var(--border);border-radius:12px;background:rgba(0,0,0,.18);"></canvas>
         <div id="monitorLegend" class="small"></div>
       </section>
 
@@ -1168,88 +1168,145 @@ data_quality_warnings: ${warningLine}`;
         const series = [];
         for (let d = 0; d <= horizon; d++) {
           const day = new Date(Date.now() + d * 86400000);
-          const dayKey = Helpers.fmt(day);
           const count = activePatients.filter((p) => {
             if (service !== "all" && p.unitService !== service) return false;
             if (!p.forecast?.expectedDate) return false;
-            return day <= new Date(p.forecast.expectedDate);
+            return day <= Helpers.toDate(p.forecast.expectedDate);
           }).length;
-          series.push({ day: dayKey, count });
+          series.push({ day: Helpers.fmt(day), count, dayIndex: d });
         }
+
         const canvas = document.getElementById("monitorChart");
-        const ctx = canvas.getContext("2d");
-        const w = canvas.width, h = canvas.height;
+        const { ctx, w, h } = setupHiDpiCanvas(canvas);
         ctx.clearRect(0, 0, w, h);
-        const left = 64, right = 24, top = 24, bottom = 48;
+
+        const muted = Helpers.cssVar("--muted", "#b7c2b8");
+        const text = Helpers.cssVar("--text", "#eef3ef");
+        const accent = Helpers.cssVar("--accent", "#4dbf8c");
+        const accent2 = Helpers.cssVar("--accent2", "#d28a3a");
+        const FONT = "Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif";
+
+        const left = 68, right = 30, top = 52, bottom = 58;
         const plotW = w - left - right;
         const plotH = h - top - bottom;
-        const maxY = Math.max(1, ...series.map((s) => s.count));
-        const yTicks = Math.min(6, maxY);
-        const yStep = Math.max(1, Math.ceil(maxY / yTicks));
-        ctx.strokeStyle = "rgba(180,200,190,0.22)";
-        ctx.fillStyle = "#cdd8cf";
-        ctx.font = "12px Inter";
-        for (let y = 0; y <= maxY; y += yStep) {
-          const py = top + plotH * (1 - y / maxY);
-          ctx.beginPath();
-          ctx.moveTo(left, py);
-          ctx.lineTo(w - right, py);
-          ctx.stroke();
-          ctx.fillText(String(y), 12, py + 4);
-        }
-        ctx.strokeStyle = "rgba(180,200,190,0.6)";
-        ctx.beginPath();
-        ctx.moveTo(left, top);
-        ctx.lineTo(left, h - bottom);
-        ctx.lineTo(w - right, h - bottom);
-        ctx.stroke();
-        const points = series.map((s, i) => {
-          const x = left + (i * plotW) / Math.max(1, series.length - 1);
-          const y = top + plotH * (1 - s.count / maxY);
-          return { x, y, c: s.count };
-        });
-        ctx.beginPath();
-        points.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-        ctx.strokeStyle = "#4dbf8c";
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        const gradient = ctx.createLinearGradient(0, top, 0, h - bottom);
-        gradient.addColorStop(0, "rgba(77,191,140,.35)");
-        gradient.addColorStop(1, "rgba(77,191,140,0.02)");
-        ctx.lineTo(points[points.length - 1]?.x || left, h - bottom);
-        ctx.lineTo(left, h - bottom);
-        ctx.closePath();
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        points.forEach((p, i) => {
-          ctx.fillStyle = i === points.length - 1 ? "#ffcc66" : "#d28a3a";
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "#eef3ef";
-          ctx.fillText(String(p.c), p.x - 4, p.y - 8);
-          if (i % Math.max(1, Math.floor(points.length / 6)) === 0 || i === points.length - 1) {
-            ctx.save();
-            ctx.translate(p.x - 10, h - bottom + 16);
-            ctx.rotate(-Math.PI / 6);
-            ctx.fillStyle = "#cdd8cf";
-            ctx.fillText(`D${i} ${safelyTruncateLabel(series[i].day)}`, 0, 0);
-            ctx.restore();
-          }
-        });
-        ctx.fillStyle = "#cdd8cf";
-        ctx.font = "12px Inter";
-        ctx.fillText(`Forecast occupancy (${service})`, left, 16);
-        ctx.fillText(`horizon = ${horizon} day(s)`, w - 160, 16);
+        const yTickValues = niceTicks(Math.max(1, ...series.map((s) => s.count)));
+        const yMax = yTickValues[yTickValues.length - 1];
+
+        ctx.fillStyle = text;
+        ctx.font = `600 14px ${FONT}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(`Forecast occupancy — ${service}`, left, 14);
+        ctx.fillStyle = muted;
+        ctx.font = `11px ${FONT}`;
+        ctx.textAlign = "right";
+        ctx.fillText(`horizon ${horizon} day(s) • peak ${Math.max(0, ...series.map((s) => s.count))}`, w - right, 16);
+
         ctx.save();
         ctx.translate(20, top + plotH / 2);
         ctx.rotate(-Math.PI / 2);
         ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = muted;
+        ctx.font = `11px ${FONT}`;
         ctx.fillText("active patients", 0, 0);
         ctx.restore();
+
+        ctx.strokeStyle = "rgba(180,200,190,0.16)";
+        ctx.lineWidth = 1;
+        ctx.fillStyle = muted;
+        ctx.font = `11px ${FONT}`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (const t of yTickValues) {
+          const y = top + plotH * (1 - t / yMax);
+          ctx.beginPath();
+          ctx.moveTo(left, y);
+          ctx.lineTo(w - right, y);
+          ctx.stroke();
+          ctx.fillText(String(t), left - 8, y);
+        }
+
+        const xLabelStep = Math.max(1, Math.ceil(series.length / 8));
+        ctx.strokeStyle = "rgba(180,200,190,0.08)";
+        for (let i = 0; i < series.length; i++) {
+          if (i % xLabelStep !== 0 && i !== series.length - 1) continue;
+          const x = left + (i * plotW) / Math.max(1, series.length - 1);
+          ctx.beginPath();
+          ctx.moveTo(x, top);
+          ctx.lineTo(x, top + plotH);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = "rgba(180,200,190,0.5)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(left, top);
+        ctx.lineTo(left, top + plotH);
+        ctx.lineTo(w - right, top + plotH);
+        ctx.stroke();
+
+        const points = series.map((s, i) => ({
+          x: left + (i * plotW) / Math.max(1, series.length - 1),
+          y: top + plotH * (1 - s.count / yMax),
+          c: s.count,
+          day: s.day,
+          dayIndex: s.dayIndex
+        }));
+
+        const areaGrad = ctx.createLinearGradient(0, top, 0, top + plotH);
+        areaGrad.addColorStop(0, "rgba(77,191,140,0.34)");
+        areaGrad.addColorStop(1, "rgba(77,191,140,0.02)");
+        ctx.beginPath();
+        points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+        ctx.lineTo(points[points.length - 1].x, top + plotH);
+        ctx.lineTo(points[0].x, top + plotH);
+        ctx.closePath();
+        ctx.fillStyle = areaGrad;
+        ctx.fill();
+
+        ctx.beginPath();
+        points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        points.forEach((p, i) => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = i === points.length - 1 ? "#ffcc66" : accent2;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0,0,0,0.45)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          ctx.fillStyle = text;
+          ctx.font = `600 11px ${FONT}`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillText(String(p.c), p.x, p.y - 8);
+        });
+
+        ctx.fillStyle = muted;
+        ctx.font = `10px ${FONT}`;
+        ctx.textBaseline = "top";
+        for (let i = 0; i < points.length; i++) {
+          if (i % xLabelStep !== 0 && i !== points.length - 1) continue;
+          const p = points[i];
+          ctx.save();
+          ctx.translate(p.x, top + plotH + 8);
+          ctx.rotate(-Math.PI / 7);
+          ctx.textAlign = "right";
+          ctx.fillText(`D${p.dayIndex} ${p.day.slice(5)}`, 0, 0);
+          ctx.restore();
+        }
+
+        ctx.fillStyle = muted;
+        ctx.font = `11px ${FONT}`;
         ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
         ctx.fillText("days from today", left + plotW / 2, h - 6);
-        ctx.textAlign = "start";
+
         const currentOcc = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.current : 0), 0);
         const currentCap = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.capacity : 0), 0);
         document.getElementById("monitorLegend").textContent = `Current occupancy: ${currentOcc}/${currentCap} • Queue: ${state.waitingQueue.length} • Max LOS: ${maxLos} day(s) • Horizon: ${horizon} day(s)`;
@@ -1313,8 +1370,47 @@ data_quality_warnings: ${warningLine}`;
       }
     };
 
-    function safelyTruncateLabel(label) {
-      return String(label).slice(5);
+    function setupHiDpiCanvas(canvas) {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const rect = canvas.getBoundingClientRect();
+      const cssW = Math.max(1, Math.round(rect.width || canvas.width));
+      const cssH = Math.max(1, Math.round(rect.height || canvas.height));
+      canvas.style.height = cssH + "px";
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      return { ctx, w: cssW, h: cssH };
+    }
+
+    function roundRectPath(ctx, x, y, w, h, r) {
+      const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.lineTo(x + w - rr, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.lineTo(x, y + rr);
+      ctx.quadraticCurveTo(x, y, x + rr, y);
+      ctx.closePath();
+    }
+
+    function niceTicks(maxValue) {
+      if (!Number.isFinite(maxValue) || maxValue <= 0) return [0, 1];
+      const exp = Math.pow(10, Math.floor(Math.log10(maxValue)));
+      const ratio = maxValue / exp;
+      let step;
+      if (ratio < 1.5) step = 0.25 * exp;
+      else if (ratio < 3) step = 0.5 * exp;
+      else if (ratio < 7) step = 1 * exp;
+      else step = 2 * exp;
+      const top = Math.ceil(maxValue / step) * step;
+      const ticks = [];
+      for (let v = 0; v <= top + step / 2; v += step) ticks.push(Number(v.toFixed(2)));
+      return ticks.length >= 2 ? ticks : [0, top || 1];
     }
 
     const THEME_KEY = "upstream-theme-mode";
@@ -1460,6 +1556,12 @@ data_quality_warnings: ${warningLine}`;
         StateStore.state = loadSharedState();
         UI.render(StateStore.state);
       }
+    });
+
+    let _resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => UI.render(StateStore.state), 80);
     });
 
     StateStore.subscribe((state) => UI.render(state));

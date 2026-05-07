@@ -73,7 +73,7 @@
 
     <section class="card" style="margin-bottom:14px;">
       <h3>Occupancy overview</h3>
-      <canvas id="monitorChart" width="1100" height="280" style="width:100%;display:block;margin:10px 0;"></canvas>
+      <canvas id="monitorChart" width="1100" height="320" style="width:100%;height:320px;display:block;margin:10px 0;border-radius:12px;background:rgba(0,0,0,.15);"></canvas>
       <div id="occupancySummary" class="small" style="margin-top:8px;"></div>
     </section>
 
@@ -156,70 +156,157 @@
       catch (_) { return fallback; }
     }
 
-    function renderMonitoring(){
-      const state=loadState();
+    function setupHiDpiCanvas(canvas) {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const rect = canvas.getBoundingClientRect();
+      const cssW = Math.max(1, Math.round(rect.width || canvas.width));
+      const cssH = Math.max(1, Math.round(rect.height || canvas.height));
+      canvas.style.height = cssH + "px";
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      return { ctx, w: cssW, h: cssH };
+    }
+
+    function roundRectPath(ctx, x, y, w, h, r) {
+      const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.lineTo(x + w - rr, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.lineTo(x, y + rr);
+      ctx.quadraticCurveTo(x, y, x + rr, y);
+      ctx.closePath();
+    }
+
+    const BAR_PALETTE = {
+      high: { top: "#ff8f8f", bot: "#cc6c6c" },
+      med:  { top: "#ffcc66", bot: "#cc9a44" },
+      low:  { top: "#57d2a1", bot: "#39a37a" }
+    };
+
+    function renderMonitoring() {
+      const state = loadState();
       const occupancy = {};
-      for(const bed of state.beds||[]){
-        occupancy[bed.service]={current:(occupancy[bed.service]?.current||0)+(bed.occupiedBy?1:0),capacity:(occupancy[bed.service]?.capacity||0)+1};
+      for (const bed of state.beds || []) {
+        occupancy[bed.service] = occupancy[bed.service] || { current: 0, capacity: 0 };
+        occupancy[bed.service].capacity += 1;
+        if (bed.occupiedBy) occupancy[bed.service].current += 1;
       }
-      const rows = Object.keys(occupancy).sort().map(s=>{const o=occupancy[s];return {service:s,current:o.current,capacity:o.capacity,pct:o.capacity>0?Math.round((o.current/o.capacity)*100):0};});
-      const canvas=document.getElementById("monitorChart");
-      const ctx=canvas.getContext("2d");
-      const w=canvas.width, h=canvas.height;
-      ctx.clearRect(0,0,w,h);
-      const left=64, right=24, top=36, bottom=64;
-      const plotW=w-left-right;
-      const plotH=h-top-bottom;
-      const muted=cssVar("--muted","#b7c2b8");
-      const border=cssVar("--border","rgba(232,240,233,0.16)");
-      ctx.strokeStyle=border;
-      ctx.font="11px Inter";
-      ctx.fillStyle=muted;
-      const ticks=[0,25,50,75,100];
-      ticks.forEach(t=>{
-        const y=top+plotH*(1-t/100);
-        ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(w-right,y); ctx.stroke();
-        ctx.fillText(`${t}%`,12,y+4);
+      const allRows = Object.keys(occupancy).sort().map((s) => {
+        const o = occupancy[s];
+        return { service: s, current: o.current, capacity: o.capacity, pct: o.capacity > 0 ? Math.round((o.current / o.capacity) * 100) : 0 };
       });
-      ctx.beginPath(); ctx.moveTo(left,top); ctx.lineTo(left,h-bottom); ctx.lineTo(w-right,h-bottom); ctx.stroke();
-      const barCount = rows.length || 1;
-      const slot = plotW/barCount;
-      const barW = Math.min(80, slot*0.6);
-      rows.forEach((r,i)=>{
-        const cx = left + slot*(i+0.5);
-        const x = cx - barW/2;
-        const barH = plotH*(r.pct/100);
-        const y = top + plotH - barH;
-        ctx.fillStyle = r.pct>75 ? "#ff8f8f" : r.pct>50 ? "#ffcc66" : "#57d2a1";
-        ctx.fillRect(x,y,barW,barH);
-        ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.strokeRect(x,y,barW,barH);
-        ctx.fillStyle = "#0c1417";
-        ctx.font = "bold 12px Inter";
-        ctx.textAlign = "center";
-        if (barH > 32) ctx.fillText(`${r.pct}%`, cx, y + 16);
-        else { ctx.fillStyle = muted; ctx.fillText(`${r.pct}%`, cx, y - 4); }
-        ctx.fillStyle = muted;
-        ctx.font = "11px Inter";
-        ctx.fillText(`${r.current}/${r.capacity}`, cx, h-bottom+14);
-        ctx.fillStyle = cssVar("--text","#eef3ef");
-        ctx.font = "12px Inter";
-        ctx.fillText(r.service, cx, h-bottom+30);
-        ctx.textAlign = "start";
-      });
-      ctx.fillStyle = cssVar("--text","#eef3ef");
-      ctx.font = "13px Inter";
-      ctx.fillText("Service occupancy (% of capacity)", left, 20);
+      const filter = (document.getElementById("serviceView") || {}).value || "all";
+      const rows = filter === "all" ? allRows : allRows.filter((r) => r.service === filter);
+
+      const canvas = document.getElementById("monitorChart");
+      const { ctx, w, h } = setupHiDpiCanvas(canvas);
+      ctx.clearRect(0, 0, w, h);
+
+      const muted = cssVar("--muted", "#b7c2b8");
+      const text = cssVar("--text", "#eef3ef");
+      const FONT = "Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif";
+      const left = 70, right = 28, top = 40, bottom = 64;
+      const plotW = w - left - right;
+      const plotH = h - top - bottom;
+
+      ctx.fillStyle = text;
+      ctx.font = `600 14px ${FONT}`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(filter === "all" ? "Service occupancy (% of capacity)" : `${filter} — occupancy detail`, left, 14);
+
       ctx.save();
-      ctx.translate(20, top + plotH/2);
-      ctx.rotate(-Math.PI/2);
+      ctx.translate(20, top + plotH / 2);
+      ctx.rotate(-Math.PI / 2);
       ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = muted;
-      ctx.font = "11px Inter";
+      ctx.font = `11px ${FONT}`;
       ctx.fillText("occupancy %", 0, 0);
       ctx.restore();
-      ctx.textAlign = "start";
-      document.getElementById("occupancySummary").innerHTML=rows.map(r=>`<div style="margin:4px 0"><strong>${r.service}</strong>: ${r.current}/${r.capacity} (${r.pct}%) ${r.pct>75?"⚠️ FULL":r.pct>50?"⚠️ HIGH":r.pct>0?"✓":"-"}</div>`).join("");
+
+      ctx.strokeStyle = "rgba(180,200,190,0.16)";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = muted;
+      ctx.font = `11px ${FONT}`;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (const t of [0, 25, 50, 75, 100]) {
+        const y = top + plotH * (1 - t / 100);
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(w - right, y);
+        ctx.stroke();
+        ctx.fillText(t + "%", left - 8, y);
+      }
+
+      ctx.strokeStyle = "rgba(180,200,190,0.5)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(left, top);
+      ctx.lineTo(left, top + plotH);
+      ctx.lineTo(w - right, top + plotH);
+      ctx.stroke();
+
+      if (rows.length === 0) {
+        ctx.fillStyle = muted;
+        ctx.font = `13px ${FONT}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("no bed data — open Forecast page and book a patient", left + plotW / 2, top + plotH / 2);
+      } else {
+        const slot = plotW / rows.length;
+        const barW = Math.min(140, slot * 0.55);
+        rows.forEach((r, i) => {
+          const cx = left + slot * (i + 0.5);
+          const x = cx - barW / 2;
+          const barH = plotH * (r.pct / 100);
+          const y = top + plotH - barH;
+          const palette = r.pct > 75 ? BAR_PALETTE.high : r.pct > 50 ? BAR_PALETTE.med : BAR_PALETTE.low;
+          if (barH > 0) {
+            const grad = ctx.createLinearGradient(0, y, 0, y + barH);
+            grad.addColorStop(0, palette.top);
+            grad.addColorStop(1, palette.bot);
+            roundRectPath(ctx, x, y, barW, barH, 6);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = "rgba(0,0,0,0.30)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+          ctx.font = `700 13px ${FONT}`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          if (barH > 28) {
+            ctx.fillStyle = "#0c1417";
+            ctx.fillText(`${r.pct}%`, cx, y + 14);
+          } else {
+            ctx.fillStyle = text;
+            ctx.fillText(`${r.pct}%`, cx, y - 10);
+          }
+          ctx.fillStyle = muted;
+          ctx.font = `11px ${FONT}`;
+          ctx.textBaseline = "top";
+          ctx.fillText(`${r.current}/${r.capacity}`, cx, top + plotH + 8);
+          ctx.fillStyle = text;
+          ctx.font = `12px ${FONT}`;
+          ctx.fillText(r.service, cx, top + plotH + 24);
+        });
+      }
+
+      const summaryRows = filter === "all" ? allRows : allRows;
+      document.getElementById("occupancySummary").innerHTML = summaryRows.map((r) => {
+        const flag = r.pct > 75 ? "⚠️ FULL" : r.pct > 50 ? "⚠️ HIGH" : r.pct > 0 ? "✓" : "—";
+        const focus = (filter !== "all" && r.service === filter) ? " <em>(focus)</em>" : "";
+        return `<div style="margin:4px 0"><strong>${r.service}</strong>: ${r.current}/${r.capacity} (${r.pct}%) ${flag}${focus}</div>`;
+      }).join("");
     }
 
     function selectBed(bedId){selectedBedId = bedId; renderMatrix();}
@@ -295,6 +382,12 @@
     }
 
     window.addEventListener("storage",(e)=>{if(e.key===STORAGE_KEY) renderMatrix();});
+
+    let _resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => renderMatrix(), 80);
+    });
 
     function initServiceFilter(){
       const state = loadState();
