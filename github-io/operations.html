@@ -49,6 +49,8 @@
     .row{display:flex;justify-content:space-between;gap:10px;border:1px dashed var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:13px}
     button.action{border:0;border-radius:8px;padding:8px 10px;color:#fff;background:linear-gradient(90deg,var(--accent),var(--accent2));cursor:pointer}
     select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);padding:8px}
+    .small{font-size:12px;color:var(--muted);margin-top:6px}
+    canvas{border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15)}
   </style>
 </head>
 <body>
@@ -69,6 +71,12 @@
       <a href="tutorial.html">Tutorial</a>
     </nav>
 
+    <section class="card" style="margin-bottom:14px;">
+      <h3>Occupancy overview</h3>
+      <canvas id="monitorChart" width="1100" height="200" style="width:100%;display:block;margin:10px 0;"></canvas>
+      <div id="occupancySummary" class="small" style="margin-top:8px;"></div>
+    </section>
+
     <div class="layout">
       <section class="card">
         <div class="filter-row">
@@ -82,6 +90,8 @@
       <aside class="card">
         <h3>Selected bed</h3>
         <div id="bedDetails" class="muted">Select a bed in the matrix.</div>
+        <h3 style="margin-top:14px;">Queue overview</h3>
+        <div id="queuePanelOps" class="muted"></div>
       </aside>
     </div>
   </div>
@@ -134,6 +144,46 @@
       }).join("");
       matrix.innerHTML = serviceHtml || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
       renderBedDetails();
+      renderMonitoring();
+      const queueRows = (state.waitingQueue || []).map((q) =>
+        `<div class="row"><strong>${q.patientId}</strong><span>${q.service} • ${q.requestedBedType} • ${q.reason}</span></div>`
+      ).join("");
+      document.getElementById("queuePanelOps").innerHTML = queueRows || "<div class='row'><strong>No queued patient</strong><span>Queue is empty</span></div>";
+    }
+
+    function renderMonitoring(){
+      const state=loadState();
+      const occupancy = {};
+      for(const bed of state.beds||[]){
+        occupancy[bed.service]={current:(occupancy[bed.service]?.current||0)+(bed.occupiedBy?1:0),capacity:(occupancy[bed.service]?.capacity||0)+1};
+      }
+      const rows = Object.keys(occupancy).sort().map(s=>{const o=occupancy[s];return {service:s,current:o.current,capacity:o.capacity,pct:o.capacity>0?Math.round((o.current/o.capacity)*100):0};});
+      const canvas=document.getElementById("monitorChart");
+      const ctx=canvas.getContext("2d");
+      const w=canvas.width, h=canvas.height;
+      ctx.clearRect(0,0,w,h);
+      ctx.strokeStyle="rgba(180,200,190,0.3)";
+      ctx.strokeRect(50, 30, w-70, h-50);
+      const maxOcc=Math.max(1,...rows.map(r=>r.capacity));
+      const barW=(w-70)/(rows.length||1);
+      rows.forEach((r,i)=>{
+        const x=50+i*barW;
+        const barH=(h-50)*(r.current/maxOcc);
+        const y=30+(h-50)*(1-r.current/maxOcc);
+        ctx.fillStyle=r.pct>75?"#ff8f8f":r.pct>50?"#ffcc66":"#57d2a1";
+        ctx.fillRect(x+2,y,barW-4,barH);
+        ctx.strokeStyle="rgba(200,200,200,0.5)";
+        ctx.strokeRect(x+2,y,barW-4,barH);
+        ctx.fillStyle="var(--muted)";
+        ctx.font="11px Inter";
+        ctx.fillText(r.service.slice(0,8),x+2,h-8);
+        ctx.fillStyle="#fff";
+        ctx.fillText(`${r.current}/${r.capacity}`,x+2,y+16);
+      });
+      ctx.fillStyle="#cdd8cf";
+      ctx.font="12px Inter";
+      ctx.fillText("Service occupancy levels",54,24);
+      document.getElementById("occupancySummary").innerHTML=rows.map(r=>`<div style="margin:4px 0"><strong>${r.service}</strong>: ${r.current}/${r.capacity} (${r.pct}%) ${r.pct>75?"⚠️ FULL":r.pct>50?"⚠️ HIGH":r.pct>0?"✓":"-"}</div>`).join("");
     }
 
     function selectBed(bedId){selectedBedId = bedId; renderMatrix();}
@@ -148,6 +198,7 @@
         const bed=state.beds.find((b)=>b.bedId===p.bedId);
         if(bed) bed.occupiedBy=null;
       }
+      state.waitingQueue = (state.waitingQueue || []).filter((q)=>q.patientId!==patientId);
       p.bedId=null;
       saveState(state);
       renderMatrix();
@@ -167,6 +218,7 @@
       bed.occupiedBy=patient.patientId;
       patient.bedId=bed.bedId;
       patient.status="booked";
+      state.waitingQueue = (state.waitingQueue || []).filter((q)=>q.patientId!==patientId);
       saveState(state);
       renderMatrix();
     }

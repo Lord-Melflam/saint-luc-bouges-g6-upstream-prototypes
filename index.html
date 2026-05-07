@@ -348,8 +348,12 @@
 
         <label>Patient name (for communication templates)</label>
         <input id="patientName" type="text" value="Patient X" />
-        <label>Patient ID</label>
-        <input id="patientId" type="text" value="P-LIVE-001" />
+        <label>Gender</label>
+        <select id="gender">
+          <option value="female">female</option>
+          <option value="male">male</option>
+          <option value="other">other</option>
+        </select>
 
         <div class="split">
           <div>
@@ -370,12 +374,24 @@
               <option value="digestive">digestive</option>
               <option value="urology">urology</option>
               <option value="general_surgery">general_surgery</option>
+              <option value="emergency">emergency</option>
+              <option value="neurology">neurology</option>
             </select>
           </div>
         </div>
 
         <label>Procedure subtype (exact procedure)</label>
         <input id="procedureSubtype" type="text" value="hip replacement" />
+        <div class="split">
+          <div>
+            <label>IDAG code <span class="info" data-tip="Optional hospital grouping code placeholder from stakeholder notes (\"IDAG\").">i</span></label>
+            <input id="idagCode" type="text" value="" placeholder="e.g. IDAG-001" />
+          </div>
+          <div>
+            <label>DMG group <span class="info" data-tip="Optional reimbursement/management grouping placeholder from stakeholder notes (\"DMG\").">i</span></label>
+            <input id="dmgGroup" type="text" value="" placeholder="e.g. DMG-A" />
+          </div>
+        </div>
 
         <div class="split">
           <div>
@@ -399,6 +415,11 @@
           <option value="standard">standard</option>
           <option value="premium">premium</option>
           <option value="monitoring">monitoring</option>
+        </select>
+        <label>Bed assignment policy</label>
+        <select id="bedPolicy">
+          <option value="strict">strict preferred type only</option>
+          <option value="flexible">allow alternative type if preferred unavailable</option>
         </select>
 
         <label>Blocker detail (optional)</label>
@@ -454,6 +475,19 @@
       <section class="card">
         <h2>Patient registry snapshot</h2>
         <div id="patientRegistry"></div>
+      </section>
+
+      <section class="card">
+        <h2>Queue panel (waiting for bed assignment)</h2>
+        <div id="queuePanel"></div>
+      </section>
+
+      <section class="card">
+        <h2>Monitoring panel (occupancy current + forecast)</h2>
+        <label>Focus service</label>
+        <select id="monitorService" onchange="UI.render(StateStore.state)"></select>
+        <canvas id="monitorChart" width="760" height="260" style="width:100%;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15);"></canvas>
+        <div id="monitorLegend" class="small"></div>
       </section>
     </div>
 
@@ -542,11 +576,30 @@
     }
 
     function loadSharedState() {
+      const fallback = {
+        patients: [],
+        beds: generateBeds(),
+        waitingQueue: [],
+        currentPatientId: null,
+        roleMode: "planner",
+        activeScenario: "manual",
+        meta: { nextPatientSeq: 1 }
+      };
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) return JSON.parse(raw);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        parsed.patients = Array.isArray(parsed.patients) ? parsed.patients : [];
+        parsed.beds = Array.isArray(parsed.beds) && parsed.beds.length ? parsed.beds : generateBeds();
+        parsed.waitingQueue = Array.isArray(parsed.waitingQueue) ? parsed.waitingQueue : [];
+        parsed.roleMode = parsed.roleMode === "nurse" ? "nurse" : "planner";
+        parsed.activeScenario = parsed.activeScenario || "manual";
+        parsed.meta = parsed.meta && Number.isFinite(parsed.meta.nextPatientSeq)
+          ? parsed.meta
+          : { nextPatientSeq: 1 };
+        return parsed;
       } catch (_) {}
-      return { patients: [], beds: generateBeds(), currentPatientId: null, roleMode: "planner", activeScenario: "manual" };
+      return fallback;
     }
 
     function persistState(state) {
@@ -562,12 +615,52 @@
       if (bed) bed.occupiedBy = null;
     }
 
-    function assignBed(state, patient, preferredType) {
-      const byService = state.beds.filter((b) => b.service === patient.unitService && !b.occupiedBy);
-      let bed = byService.find((b) => b.type === preferredType) || byService[0];
-      if (!bed) return null;
-      bed.occupiedBy = patient.patientId;
-      return bed;
+    function queueEntry(state, patient, reason, details = "") {
+      const existing = state.waitingQueue.find((q) => q.patientId === patient.patientId);
+      const entry = {
+        patientId: patient.patientId,
+        service: patient.unitService,
+        requestedBedType: patient.bedPreference,
+        reason,
+        details,
+        timestamp: Helpers.nowIso()
+      };
+      if (existing) Object.assign(existing, entry);
+      else state.waitingQueue.push(entry);
+      state.waitingQueue.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+    }
+
+    function dequeueEntry(state, patientId) {
+      state.waitingQueue = state.waitingQueue.filter((q) => q.patientId !== patientId);
+    }
+
+    function tryAssignBed(state, patient, preferredType, policy) {
+      const freeInService = state.beds.filter((b) => b.service === patient.unitService && !b.occupiedBy);
+      if (freeInService.length === 0) {
+        return { bed: null, reason: "service_full", details: "No free bed in selected service", alternatives: [] };
+      }
+      const preferredFree = freeInService.filter((b) => b.type === preferredType);
+      if (preferredFree.length > 0) {
+        preferredFree[0].occupiedBy = patient.patientId;
+        return { bed: preferredFree[0], reason: null, details: "", alternatives: [] };
+      }
+      const alternatives = Array.from(new Set(freeInService.map((b) => b.type)));
+      if (policy === "flexible") {
+        const alt = freeInService[0];
+        alt.occupiedBy = patient.patientId;
+        return {
+          bed: alt,
+          reason: "preferred_unavailable_alt_used",
+          details: `Preferred type '${preferredType}' unavailable; assigned '${alt.type}'.`,
+          alternatives
+        };
+      }
+      return {
+        bed: null,
+        reason: "preferred_unavailable",
+        details: `Preferred type '${preferredType}' unavailable in ${patient.unitService}.`,
+        alternatives
+      };
     }
 
     const ForecastEngine = {
@@ -576,6 +669,8 @@
         if (input.age >= 75) score += 1.0;
         else if (input.age >= 65) score += 0.5;
         score += Math.min(input.severityScore * 0.22, 3.0);
+        if (input.gender === "male") score += 0.2;
+        else if (input.gender === "other") score += 0.1;
         if (input.social) score += 1.5;
         if (input.postacute) score += 1.0;
         if (input.procedure === "emergency") score += 0.8;
@@ -608,11 +703,15 @@
         return {
           patientId: resolvedPatientId,
           name: input.patientName,
+          gender: input.gender,
           unitService: input.unitService,
           specialty: input.specialty,
           procedureType: input.procedure,
           procedureSubtype: input.procedureSubtype,
+          idagCode: input.idagCode,
+          dmgGroup: input.dmgGroup,
           bedPreference: input.bedType,
+          bedPolicy: input.bedPolicy,
           age: input.age,
           severityType: input.severityType,
           severityScore: input.severityScore,
@@ -648,7 +747,30 @@
         const activePatients = state.patients.filter((p) => p.status !== "discharged");
         const thresholdAtRisk = activePatients.filter((p) => p.thresholdRisk !== "safe");
         const afterThreshold = activePatients.filter((p) => p.billingLossRisk).length;
-        return { occupancyRows, activePatients, thresholdAtRisk, afterThreshold };
+        const seriesDays = Math.max(
+          5,
+          ...activePatients.map((p) => Number.isFinite(p?.forecast?.los) ? p.forecast.los : 0)
+        );
+        const serviceForecast = {};
+        const globalForecast = [];
+        for (let d = 0; d <= seriesDays; d++) {
+          const day = new Date(Date.now() + d * 86400000);
+          const dayKey = Helpers.fmt(day);
+          let globalCount = 0;
+          for (const p of activePatients) {
+            if (!p.forecast?.expectedDate) continue;
+            const expected = new Date(p.forecast.expectedDate);
+            if (day <= expected) {
+              globalCount += 1;
+              serviceForecast[p.unitService] ||= [];
+              serviceForecast[p.unitService][d] = (serviceForecast[p.unitService][d] || 0) + 1;
+            } else if (serviceForecast[p.unitService] && serviceForecast[p.unitService][d] == null) {
+              serviceForecast[p.unitService][d] = serviceForecast[p.unitService][d] || 0;
+            }
+          }
+          globalForecast.push({ day: dayKey, count: globalCount });
+        }
+        return { occupancyRows, activePatients, thresholdAtRisk, afterThreshold, globalForecast, serviceForecast };
       }
     };
 
@@ -678,11 +800,11 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
 
     const ScenarioEngine = {
       presets: {
-        late_transport: { patientName: "Late transport case", patientId: "P-SC-LATE-TR", blockerCategory: "transport", blockerDetail: "Vehicle delayed", departureTime: "12:20", social: "true" },
-        unresolved_blocker: { patientName: "Unresolved blocker case", patientId: "P-SC-BLOCK", blockerCategory: "admin", blockerDetail: "Prescription pending", departureTime: "11:50", postacute: "true" },
-        late_medical_validation: { patientName: "Late validation case", patientId: "P-SC-MED", procedure: "cardiovascular", blockerCategory: "medical", blockerDetail: "Final validation pending", departureTime: "12:10" },
-        occupancy_spike: { patientName: "Occupancy spike case", patientId: "P-SC-OCC", unitService: "emergency", procedure: "emergency", blockerCategory: "none", blockerDetail: "", departureTime: "11:15", social: "true" },
-        missing_critical_data: { patientName: "Missing data case", patientId: "P-SC-MISS", blockerCategory: "transport", blockerDetail: "", procedureSubtype: "", departureTime: "11:40" }
+        late_transport: { patientName: "Late transport case", blockerCategory: "transport", blockerDetail: "Vehicle delayed", departureTime: "12:20", social: "true" },
+        unresolved_blocker: { patientName: "Unresolved blocker case", blockerCategory: "admin", blockerDetail: "Prescription pending", departureTime: "11:50", postacute: "true" },
+        late_medical_validation: { patientName: "Late validation case", procedure: "cardiovascular", blockerCategory: "medical", blockerDetail: "Final validation pending", departureTime: "12:10" },
+        occupancy_spike: { patientName: "Occupancy spike case", procedure: "emergency", blockerCategory: "none", blockerDetail: "", departureTime: "11:15", social: "true" },
+        missing_critical_data: { patientName: "Missing data case", blockerCategory: "transport", blockerDetail: "", procedureSubtype: "", departureTime: "11:40" }
       },
       apply(name) {
         const p = this.presets[name];
@@ -691,6 +813,7 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
           const el = document.getElementById(k);
           if (el) el.value = v;
         }
+        if (p.procedure) syncProcedureMapping();
       }
     };
 
@@ -699,49 +822,78 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
       listeners: [],
       subscribe(listener) { this.listeners.push(listener); },
       notify() { persistState(this.state); this.listeners.forEach((listener) => listener(this.state)); },
-      makeUniquePatientId(baseId) {
-        let candidate = (baseId || "").trim() || `P-${Date.now()}`;
-        let i = 1;
-        while (this.state.patients.some((p) => p.patientId === candidate)) {
-          candidate = `${baseId || "P"}-${i++}`;
-        }
-        return candidate;
+      generatePatientId() {
+        const seq = this.state.meta.nextPatientSeq++;
+        return `P-LIVE-${String(seq).padStart(4, "0")}`;
       },
       getPatientById(patientId) {
         return this.state.patients.find((p) => p.patientId === patientId);
       },
+      findDuplicate(input, ignoreId = null) {
+        return this.state.patients.find((p) =>
+          p.status !== "discharged" &&
+          p.patientId !== ignoreId &&
+          p.name.toLowerCase() === String(input.patientName || "").toLowerCase() &&
+          p.age === input.age &&
+          p.gender === input.gender &&
+          p.procedureType === input.procedure &&
+          p.procedureSubtype === input.procedureSubtype &&
+          p.unitService === input.unitService &&
+          p.severityType === input.severityType &&
+          p.severityScore === input.severityScore
+        );
+      },
       upsertFromInput(input, options = { updateExisting: false }) {
+        const duplicate = this.findDuplicate(input);
+        if (duplicate) {
+          const msg = `Duplicate patient data detected (existing ${duplicate.patientId}).`;
+          document.getElementById("result").textContent = msg;
+          return false;
+        }
         const forecast = ForecastEngine.compute(input);
-        const requestedId = (input.patientId || "").trim() || `P-${Date.now()}`;
-        const existing = this.state.patients.find((p) => p.patientId === requestedId);
-        const resolvedId = (options.updateExisting && existing)
-          ? requestedId
-          : this.makeUniquePatientId(requestedId);
+        const resolvedId = this.generatePatientId();
         const incoming = DataContract.buildPatient(input, forecast, resolvedId);
-        if (options.updateExisting && existing && existing.bedId) releaseBed(this.state, existing.bedId);
-        const bed = assignBed(this.state, incoming, incoming.bedPreference);
-        if (bed) incoming.bedId = bed.bedId;
+        const assignment = tryAssignBed(this.state, incoming, incoming.bedPreference, incoming.bedPolicy);
+        if (assignment.bed) {
+          incoming.bedId = assignment.bed.bedId;
+          dequeueEntry(this.state, resolvedId);
+          if (assignment.reason === "preferred_unavailable_alt_used") {
+            incoming.dataWarnings.push(assignment.details);
+          }
+        }
         else {
           incoming.status = "waiting_bed";
-          incoming.dataWarnings.push("No free bed available in selected service");
+          incoming.dataWarnings.push(assignment.details);
+          queueEntry(this.state, incoming, assignment.reason, assignment.details + (assignment.alternatives?.length ? ` Alternatives: ${assignment.alternatives.join(", ")}` : ""));
         }
-        const idx = this.state.patients.findIndex((p) => p.patientId === resolvedId);
-        if (idx >= 0) this.state.patients[idx] = incoming;
-        else this.state.patients.push(incoming);
+        this.state.patients.push(incoming);
         this.state.currentPatientId = resolvedId;
         this.notify();
+        return true;
       },
       updatePatientFromInput(patientId, input, options = { recomputeLos: true }) {
         const existing = this.getPatientById(patientId);
         if (!existing) return false;
+        const duplicate = this.findDuplicate(input, patientId);
+        if (duplicate) {
+          document.getElementById("result").textContent = `Update blocked: duplicate with ${duplicate.patientId}.`;
+          return false;
+        }
         const forecast = options.recomputeLos ? ForecastEngine.compute(input) : existing.forecast;
         const incoming = DataContract.buildPatient({ ...input, patientId }, forecast, patientId);
         if (existing.bedId) releaseBed(this.state, existing.bedId);
-        const bed = assignBed(this.state, incoming, incoming.bedPreference);
-        if (bed) incoming.bedId = bed.bedId;
+        const assignment = tryAssignBed(this.state, incoming, incoming.bedPreference, incoming.bedPolicy);
+        if (assignment.bed) {
+          incoming.bedId = assignment.bed.bedId;
+          dequeueEntry(this.state, patientId);
+          if (assignment.reason === "preferred_unavailable_alt_used") {
+            incoming.dataWarnings.push(assignment.details);
+          }
+        }
         else {
           incoming.status = "waiting_bed";
-          incoming.dataWarnings.push("No free bed available in selected service");
+          incoming.dataWarnings.push(assignment.details);
+          queueEntry(this.state, incoming, assignment.reason, assignment.details + (assignment.alternatives?.length ? ` Alternatives: ${assignment.alternatives.join(", ")}` : ""));
         }
         const idx = this.state.patients.findIndex((p) => p.patientId === patientId);
         this.state.patients[idx] = incoming;
@@ -758,31 +910,47 @@ D0 (${Helpers.fmt(timeline.d0)}): planned departure ${patient.plannedDepartureTi
         return {
           procedure: document.getElementById("procedure").value,
           age: Number(document.getElementById("age").value),
+          gender: document.getElementById("gender").value,
           severityType: document.getElementById("severityType").value,
           severityScore: Number(document.getElementById("severityScore").value),
           social: document.getElementById("social").value === "true",
           postacute: document.getElementById("postacute").value === "true",
           patientName: document.getElementById("patientName").value.trim() || "Patient",
-          patientId: document.getElementById("patientId").value.trim() || "",
           unitService: document.getElementById("unitService").value,
           specialty: document.getElementById("specialty").value,
           procedureSubtype: document.getElementById("procedureSubtype").value.trim(),
+          idagCode: document.getElementById("idagCode").value.trim(),
+          dmgGroup: document.getElementById("dmgGroup").value.trim(),
           blockerCategory: document.getElementById("blockerCategory").value,
           blockerDetail: document.getElementById("blockerDetail").value.trim(),
           departureTime: document.getElementById("departureTime").value || "11:00",
-          bedType: document.getElementById("bedType").value
+          bedType: document.getElementById("bedType").value,
+          bedPolicy: document.getElementById("bedPolicy").value
         };
       },
       render(state) {
         document.getElementById("inputPanel").classList.toggle("hidden", state.roleMode === "nurse");
         const patient = state.patients.find((p) => p.patientId === state.currentPatientId);
-        if (!patient) return;
+        const summary = ControlTowerEngine.compute(state);
+        const queueRows = state.waitingQueue.map((q) => `<div class="feed-row"><strong>${q.patientId}</strong><span>${q.service} • ${q.requestedBedType} • ${q.reason} • ${q.timestamp}</span></div>`).join("");
+        document.getElementById("queuePanel").innerHTML = queueRows || `<div class="feed-row"><strong>No queued patient</strong><span>All assignable patients have a bed</span></div>`;
+        this.renderMonitoring(state, summary);
+        if (!patient) {
+          document.getElementById("result").textContent = "No active selected patient yet. Use Add patient & Sync.";
+          document.getElementById("stakeholderFeed").innerHTML = `<div class="feed-row"><strong>Stakeholder feed</strong><span>Awaiting patient creation</span></div>`;
+          document.getElementById("controlTower").innerHTML = `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div>`;
+          document.getElementById("patientRegistry").innerHTML = state.patients.length
+            ? state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("")
+            : `<div class="feed-row"><strong>No patients</strong><span>Use Add patient & Sync to create one</span></div>`;
+          return;
+        }
         const timeline = CommunicationEngine.buildTimeline(patient.forecast.expectedDate);
         const warningLine = patient.dataWarnings.length ? patient.dataWarnings.join("; ") : "none";
         document.getElementById("result").textContent =
 `patient_id: ${patient.patientId}
 predicted_los_days: ${patient.forecast.los}
 severity_index: ${patient.severityType}=${patient.severityScore}
+gender: ${patient.gender}
 expected_discharge_date: ${Helpers.fmt(patient.forecast.expectedDate)}
 planned_departure_time: ${patient.plannedDepartureTime}
 assigned_bed: ${patient.bedId || "none"}
@@ -798,7 +966,6 @@ data_quality_warnings: ${warningLine}`;
           <div class="feed-row"><strong>Bed assignment</strong><span>${patient.bedId || "waiting bed"}</span></div>
           <div class="feed-row"><strong>Threshold owner</strong><span>${thresholdOwner}</span></div>
           <div class="feed-row"><strong>Blocker owner</strong><span>${blockerOwner}</span></div>`;
-        const summary = ControlTowerEngine.compute(state);
         const occ = summary.occupancyRows.map((r) => `<div class="feed-row"><strong>${r.service}</strong><span>${r.current}/${r.capacity} (${r.rate}%)</span></div>`).join("");
         const risk = summary.thresholdAtRisk.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span class="${Helpers.riskClass(p.thresholdRisk)}">${p.thresholdRisk.toUpperCase()} • ${p.bedId || "no bed"}</span></div>`).join("") || `<div class="feed-row"><strong>Threshold queue</strong><span class="status-ok">No at-risk patient</span></div>`;
         document.getElementById("controlTower").innerHTML = `<div class="feed-row"><strong>Tracked active patients</strong><span>${summary.activePatients.length}</span></div><div class="feed-row"><strong>After-threshold risk count</strong><span class="${summary.afterThreshold ? "status-risk" : "status-ok"}">${summary.afterThreshold}</span></div>${occ}${risk}`;
@@ -812,6 +979,42 @@ data_quality_warnings: ${warningLine}`;
         ].join("\n");
         const rows = state.patients.map((p) => `<div class="feed-row"><strong>${p.patientId}</strong><span>${p.name} • ${p.unitService} • ${p.bedId || p.status}</span></div>`).join("");
         document.getElementById("patientRegistry").innerHTML = rows || `<div class="feed-row"><strong>No patients</strong><span>Use Compute & Sync to create one</span></div>`;
+      },
+      renderMonitoring(state, summary) {
+        const select = document.getElementById("monitorService");
+        if (select.options.length === 0) {
+          const services = summary.occupancyRows.map((r) => r.service);
+          select.innerHTML = `<option value="all">all services</option>` + services.map((s) => `<option value="${s}">${s}</option>`).join("");
+        }
+        const service = select.value || "all";
+        const series = service === "all"
+          ? summary.globalForecast
+          : (summary.globalForecast.map((x, i) => ({ day: x.day, count: (summary.serviceForecast[service] && summary.serviceForecast[service][i]) || 0 })));
+        const canvas = document.getElementById("monitorChart");
+        const ctx = canvas.getContext("2d");
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.strokeStyle = "rgba(180,200,190,0.3)";
+        ctx.strokeRect(40, 20, w - 60, h - 50);
+        const maxY = Math.max(1, ...series.map((s) => s.count));
+        const points = series.map((s, i) => {
+          const x = 40 + (i * (w - 60)) / Math.max(1, series.length - 1);
+          const y = 20 + (h - 50) * (1 - s.count / maxY);
+          return { x, y, c: s.count };
+        });
+        ctx.beginPath();
+        points.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        ctx.strokeStyle = "#4dbf8c";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        points.forEach((p) => { ctx.fillStyle = "#d28a3a"; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); });
+        ctx.fillStyle = "#cdd8cf";
+        ctx.font = "12px Inter";
+        ctx.fillText(`Forecast occupancy (${service})`, 44, 16);
+        ctx.fillText(`max=${maxY}`, w - 100, 16);
+        const currentOcc = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.current : 0), 0);
+        const currentCap = summary.occupancyRows.reduce((acc, r) => acc + (service === "all" || r.service === service ? r.capacity : 0), 0);
+        document.getElementById("monitorLegend").textContent = `Current occupancy: ${currentOcc}/${currentCap} • Queue: ${state.waitingQueue.length} • Forecast horizon: ${series.length - 1} day(s)`;
       }
     };
 
@@ -842,7 +1045,6 @@ data_quality_warnings: ${warningLine}`;
 
     function populateFormFromPatient(patient) {
       document.getElementById("patientName").value = patient.name || "";
-      document.getElementById("patientId").value = patient.patientId || "";
       document.getElementById("procedure").value = patient.procedureType || "orthopedic";
       syncProcedureMapping();
       if (patient.specialty && Array.from(document.getElementById("specialty").options).some((o) => o.value === patient.specialty)) {
@@ -855,12 +1057,16 @@ data_quality_warnings: ${warningLine}`;
       document.getElementById("severityType").value = patient.severityType || "charlson";
       document.getElementById("severityScore").value = Number.isFinite(patient.severityScore) ? patient.severityScore : 4;
       document.getElementById("age").value = Number.isFinite(patient.age) ? patient.age : 65;
+      document.getElementById("gender").value = patient.gender || "female";
       document.getElementById("social").value = patient.socialComplexity ? "true" : "false";
       document.getElementById("postacute").value = patient.postAcuteNeed ? "true" : "false";
+      document.getElementById("idagCode").value = patient.idagCode || "";
+      document.getElementById("dmgGroup").value = patient.dmgGroup || "";
       document.getElementById("blockerCategory").value = patient.blockerCategory || "none";
       document.getElementById("blockerDetail").value = patient.blockerDetail || "";
       document.getElementById("departureTime").value = patient.plannedDepartureTime || "11:00";
       document.getElementById("bedType").value = patient.bedPreference || "standard";
+      document.getElementById("bedPolicy").value = patient.bedPolicy || "strict";
     }
 
     function enterEditMode(patientId) {
@@ -868,7 +1074,6 @@ data_quality_warnings: ${warningLine}`;
       if (!patient) return;
       EDITING_PATIENT_ID = patientId;
       populateFormFromPatient(patient);
-      document.getElementById("patientId").readOnly = true;
       document.getElementById("editModePanel").classList.remove("hidden");
       document.getElementById("btnAddSync").classList.add("hidden");
       document.getElementById("btnUpdateById").classList.add("hidden");
@@ -876,7 +1081,6 @@ data_quality_warnings: ${warningLine}`;
 
     function declineEditUpdate() {
       EDITING_PATIENT_ID = null;
-      document.getElementById("patientId").readOnly = false;
       document.getElementById("editModePanel").classList.add("hidden");
       document.getElementById("btnAddSync").classList.remove("hidden");
       document.getElementById("btnUpdateById").classList.remove("hidden");
@@ -895,12 +1099,11 @@ data_quality_warnings: ${warningLine}`;
     function runApp(mode = "add") {
       StateStore.setScenario("manual");
       if (mode === "update") {
-        const id = document.getElementById("patientId").value.trim();
-        if (!id || !StateStore.getPatientById(id)) {
+        if (!EDITING_PATIENT_ID || !StateStore.getPatientById(EDITING_PATIENT_ID)) {
           document.getElementById("result").textContent = "Update failed: patient ID not found. Use Add patient & Sync, or open edit from Operations Matrix.";
           return;
         }
-        StateStore.updatePatientFromInput(id, UI.readInput(), { recomputeLos: true });
+        StateStore.updatePatientFromInput(EDITING_PATIENT_ID, UI.readInput(), { recomputeLos: true });
         return;
       }
       StateStore.upsertFromInput(UI.readInput(), { updateExisting: false });
@@ -909,7 +1112,7 @@ data_quality_warnings: ${warningLine}`;
     function runScenario(name) {
       ScenarioEngine.apply(name);
       StateStore.setScenario(name);
-      StateStore.upsertFromInput(UI.readInput(), { updateExisting: true });
+      StateStore.upsertFromInput(UI.readInput(), { updateExisting: false });
     }
 
     window.addEventListener("storage", (e) => {

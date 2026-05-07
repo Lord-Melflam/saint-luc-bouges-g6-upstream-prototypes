@@ -43,44 +43,95 @@
     </nav>
 
     <section class="card">
-      <h2>1) Forecast & Coordination page</h2>
-      <ul>
-        <li>Select a <strong>procedure type</strong> <span class="info" data-tip="Procedure selection auto-links default unit/service and specialty.">i</span>.</li>
-        <li>Set <strong>severity index type + severity score</strong> <span class="info" data-tip="Stakeholder request: severity framing instead of comorbidity-only wording.">i</span>.</li>
-        <li>Add/adjust blocker category and planned departure time.</li>
-        <li>Use <strong>Add patient & Sync</strong> to create a new patient and occupy a bed.</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <h2>2) Operations Matrix page</h2>
-      <ul>
-        <li>Switch between <strong>Global view</strong> and <strong>per-service view</strong>.</li>
-        <li>Click a bed to inspect patient details and threshold risk.</li>
-        <li>Use <strong>Modify patient in Forecast page</strong> to jump to editing workflow.</li>
-        <li>Discharge action frees bed immediately; assigning a waiting patient occupies it.</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <h2>3) Roles and update workflow</h2>
-      <ul>
-        <li><strong>Planner mode:</strong> full input and coordination controls.</li>
-        <li><strong>Nurse mode:</strong> lighter view for quick operational reading.</li>
-        <li>When editing a patient from matrix, use <strong>Confirm update</strong> or <strong>Decline update</strong>.</li>
-        <li><strong>Recompute LOS on update</strong> is optional.</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <h2>4) Demo sequence (recommended)</h2>
+      <h2>1) End-to-end workflow</h2>
       <ol>
-        <li>Add two patients in Forecast page.</li>
-        <li>Open Operations Matrix and show both occupied beds.</li>
-        <li>Filter by one service.</li>
-        <li>Modify one patient from matrix and confirm update without LOS recompute.</li>
-        <li>Discharge one patient and show bed becomes free in real time.</li>
+        <li>Create patient in <strong>Forecast & Coordination</strong>.</li>
+        <li>System generates patient ID automatically and computes LOS/threshold risk.</li>
+        <li>Bed assignment tries preferred bed type in selected service.</li>
+        <li>If impossible, patient is queued with reason + timestamp.</li>
+        <li>Open <strong>Operations Matrix</strong> to inspect beds, queue, and reassign/discharge.</li>
+        <li>Edit from matrix if needed (confirm/decline update, optional LOS recompute).</li>
       </ol>
+    </section>
+
+    <section class="card">
+      <h2>2) Forecast inputs explained</h2>
+      <ul>
+        <li><strong>Procedure type</strong>: drives default service + specialty mapping.</li>
+        <li><strong>Severity index type</strong>: charlson or elixhauser framing.</li>
+        <li><strong>Severity score</strong>: 0–15 severity intensity.</li>
+        <li><strong>Gender</strong>: used in LOS computation.</li>
+        <li><strong>Primary blocker</strong>: medical/admin/transport/family/logistics/none.</li>
+        <li><strong>Bed type + policy</strong>:
+          - strict: queue if preferred bed unavailable,
+          - flexible: assign alternative type if possible.</li>
+        <li><strong>IDAG / DMG</strong>: optional grouping placeholders from stakeholder notes.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>3) Outputs explained</h2>
+      <p class="muted">Example forecast output:</p>
+      <pre>patient_id: P-LIVE-0007
+predicted_los_days: 5
+severity_index: charlson=4
+gender: female
+expected_discharge_date: 2026-05-12
+planned_departure_time: 11:00
+assigned_bed: none
+threshold_risk_status: info
+billing_loss_risk: no
+data_quality_warnings: Preferred type unavailable in selected service</pre>
+      <p class="muted">Meaning:</p>
+      <ul>
+        <li><strong>assigned_bed: none</strong> means patient is queued, not lost.</li>
+        <li><strong>threshold_risk_status</strong> indicates distance to discharge billing cutoff.</li>
+        <li><strong>data_quality_warnings</strong> indicates operational assignment constraints.</li>
+      </ul>
+      <p class="muted">Nurse script and SMS panels are operational communication templates derived from same patient state.</p>
+    </section>
+
+    <section class="card">
+      <h2>4) Operations Matrix usage</h2>
+      <ul>
+        <li>Use <strong>Global view</strong> to see all services; use service filter for local focus.</li>
+        <li>Click a bed tile to inspect patient + risk details.</li>
+        <li>For occupied bed:
+          - discharge (frees bed),
+          - modify patient (opens forecast edit mode).</li>
+        <li>For free bed:
+          - assign a queued/waiting patient directly to this bed.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>5) Role modes</h2>
+      <ul>
+        <li><strong>Planner:</strong> full data-entry and coordination controls.</li>
+        <li><strong>Nurse:</strong> lightweight monitoring view; planner-heavy panel hidden.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>6) Simulation presets</h2>
+      <p>Use preset buttons on Forecast page to inject realistic stress scenarios quickly:</p>
+      <ul>
+        <li>Late transport</li>
+        <li>Unresolved blocker</li>
+        <li>Late medical validation</li>
+        <li>Occupancy spike</li>
+        <li>Missing critical data</li>
+      </ul>
+      <p class="muted">Recommended presentation flow: baseline patient -> trigger preset -> observe queue/occupancy/risk changes in matrix.</p>
+    </section>
+
+    <section class="card">
+      <h2>7) Monitoring panel</h2>
+      <ul>
+        <li>Shows current occupancy and forecast occupancy horizon.</li>
+        <li>Supports service-specific or global perspective.</li>
+        <li>Updates whenever patient creation/update/discharge changes state.</li>
+      </ul>
     </section>
   </div>
 
