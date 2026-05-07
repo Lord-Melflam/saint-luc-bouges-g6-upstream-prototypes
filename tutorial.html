@@ -57,19 +57,19 @@
     <section class="card">
       <h2>2) Forecast inputs explained</h2>
       <ul>
-        <li><strong>Procedure type</strong> — drives an automatic mapping to <em>service</em> and <em>specialty</em> (those fields are read-only and follow the procedure choice).</li>
-        <li><strong>Severity index type</strong> — Charlson or Elixhauser framing (replaces the old comorbidity wording, per stakeholder feedback).</li>
-        <li><strong>Severity score</strong> — 0–15 intensity. Influences both LOS and confidence.</li>
-        <li><strong>Age, gender, social complexity, post-acute need</strong> — modify the LOS prediction and the confidence label (high / medium / low).</li>
-        <li><strong>Primary blocker</strong> — medical / admin / transport / family / logistics / none. Routes to a different stakeholder owner in the alert mapping.</li>
-        <li><strong>Planned departure time (D0)</strong> — measured against the discharge cutoff (12:00). Yields <code>safe</code> / <code>info</code> / <code>warning</code> / <code>critical</code> threshold risk.</li>
+        <li><strong>Procedure type</strong> : drives an automatic mapping to <em>service</em> and <em>specialty</em> (those fields are read-only and follow the procedure choice).</li>
+        <li><strong>Severity index type</strong> : Charlson or Elixhauser framing (replaces the old comorbidity wording, per stakeholder feedback).</li>
+        <li><strong>Severity score</strong> : 0–15 intensity. Influences both LOS and confidence.</li>
+        <li><strong>Age, gender, social complexity, post-acute need</strong> : modify the LOS prediction and the confidence label (high / medium / low).</li>
+        <li><strong>Primary blocker</strong> : medical / admin / transport / family / logistics / none. Routes to a different stakeholder owner in the alert mapping.</li>
+        <li><strong>Planned departure time (D0)</strong> : measured against the discharge cutoff (12:00). Yields <code>safe</code> / <code>info</code> / <code>warning</code> / <code>critical</code> threshold risk.</li>
         <li><strong>Bed type + policy</strong>:
           <ul>
-            <li><strong>strict</strong> — queue if the preferred bed type is not free in the service;</li>
-            <li><strong>flexible</strong> — accept an alternative bed type and record a data-quality warning.</li>
+            <li><strong>strict</strong> : queue if the preferred bed type is not free in the service;</li>
+            <li><strong>flexible</strong> : accept an alternative bed type and record a data-quality warning.</li>
           </ul>
         </li>
-        <li><strong>IDAG / DMG</strong> — optional grouping placeholders from stakeholder notes; informational only.</li>
+        <li><strong>IDAG / DMG</strong> : optional grouping placeholders from stakeholder notes; informational only.</li>
       </ul>
     </section>
 
@@ -99,10 +99,10 @@ threshold_risk_status: safe
 billing_loss_risk: no
 data_quality_warnings: none</pre>
       <ul>
-        <li><strong>assigned_bed: none</strong> — patient is queued, not rejected. Open Operations Matrix to assign manually.</li>
-        <li><strong>threshold_risk_status</strong> — distance to the 12:00 discharge cutoff. <code>warning</code> &lt; 30 min before cutoff, <code>critical</code> after cutoff.</li>
-        <li><strong>billing_loss_risk: yes</strong> — planned departure is after the cutoff, so the day's bed-night may not be reimbursable.</li>
-        <li><strong>data_quality_warnings</strong> — operational facts (preferred bed type unavailable, missing subtype, blocker without detail).</li>
+        <li><strong>assigned_bed: none</strong> : patient is queued, not rejected. Open Operations Matrix to assign manually.</li>
+        <li><strong>threshold_risk_status</strong> : distance to the 12:00 discharge cutoff. <code>warning</code> &lt; 30 min before cutoff, <code>critical</code> after cutoff.</li>
+        <li><strong>billing_loss_risk: yes</strong> : planned departure is after the cutoff, so the day's bed-night may not be reimbursable.</li>
+        <li><strong>data_quality_warnings</strong> : operational facts (preferred bed type unavailable, missing subtype, blocker without detail).</li>
       </ul>
       <p class="muted">The Communication Hub renders a nurse handover script and an SMS timeline (D-2 / D-1 / D0) from the same patient state.</p>
     </section>
@@ -111,12 +111,12 @@ data_quality_warnings: none</pre>
       <h2>5) Selection drives every panel</h2>
       <ul>
         <li>The <strong>selection pill</strong> at the top of the Forecast page shows the focused patient (id, name, unit, bed, threshold) with a <em>Deselect</em> button.</li>
-        <li>Clicking any patient row in the Patient registry, Queue, Threshold-at-risk list, or Nurse station sets that patient as the focus — every patient-aware panel updates in lockstep:
+        <li>Clicking any patient row in the Patient registry, Queue, Threshold-at-risk list, or Nurse station sets that patient as the focus. Every patient-aware panel updates in lockstep:
           <ul>
-            <li><strong>Communication Hub</strong> — nurse script, SMS, comm windows.</li>
-            <li><strong>Stakeholder Update Feed</strong> — bed assignment, threshold owner, blocker owner, comm windows.</li>
-            <li><strong>Upstream Control Tower</strong> — global occupancy + a focus subsection (queue position, bed status).</li>
-            <li><strong>Tutorial & Demo script</strong> — switches from a generic flow to a per-patient cheat sheet.</li>
+            <li><strong>Communication Hub</strong> : nurse script, SMS, comm windows.</li>
+            <li><strong>Stakeholder Update Feed</strong> : bed assignment, threshold owner, blocker owner, comm windows.</li>
+            <li><strong>Upstream Control Tower</strong> : global occupancy + a focus subsection (queue position, bed status).</li>
+            <li><strong>Tutorial & Demo script</strong> : switches from a generic flow to a per-patient cheat sheet.</li>
           </ul>
         </li>
         <li>Adding a patient automatically focuses the new patient. Editing a patient (via the Operations Matrix handoff) also focuses it.</li>
@@ -126,7 +126,7 @@ data_quality_warnings: none</pre>
     <section class="card">
       <h2>6) Operations Matrix usage</h2>
       <ul>
-        <li><strong>Service view</strong> filter — global by default; switching to a service narrows both the bed matrix and the occupancy chart at the top.</li>
+        <li><strong>Service view</strong> filter : global by default; switching to a service narrows both the bed matrix and the occupancy chart at the top.</li>
         <li>Click any bed tile to inspect details on the right.</li>
         <li>Occupied bed: <em>Modify patient in Forecast page</em> (opens edit mode) or <em>Discharge patient</em> (frees the bed instantly).</li>
         <li>Free bed: pick a queued / unassigned patient and assign directly.</li>
@@ -137,8 +137,8 @@ data_quality_warnings: none</pre>
     <section class="card">
       <h2>7) Role modes & Nurse station</h2>
       <ul>
-        <li><strong>Planner</strong> — full Forecast & Input Panel + every coordination card.</li>
-        <li><strong>Nurse</strong> — the input panel is hidden; the page becomes a read-first board.</li>
+        <li><strong>Planner</strong> : full Forecast & Input Panel + every coordination card.</li>
+        <li><strong>Nurse</strong> : the input panel is hidden; the page becomes a read-first board.</li>
         <li>The <strong>Nurse station</strong> stat chips show active patients, unit load, queue depth, and threshold alerts.</li>
         <li>Filters: unit (per-service or all), scope (active or all). The patient list and dropdown both honour the filters.</li>
         <li>Clicking a patient on the left selects it. If the selected patient is filtered out, the right-hand detail panel says so instead of silently switching.</li>
@@ -149,11 +149,11 @@ data_quality_warnings: none</pre>
       <h2>8) Simulation presets</h2>
       <p>Stress-test the dashboard with one click:</p>
       <ul>
-        <li><strong>Late transport</strong> — pickup delayed; threshold risk rising.</li>
-        <li><strong>Unresolved blocker</strong> — admin/medical paperwork pending past D0.</li>
-        <li><strong>Late medical validation</strong> — physician sign-off slips after the cutoff.</li>
-        <li><strong>Occupancy spike</strong> — adds emergency-service load.</li>
-        <li><strong>Missing critical data</strong> — flags data-quality warnings instead of failing silently.</li>
+        <li><strong>Late transport</strong> : pickup delayed; threshold risk rising.</li>
+        <li><strong>Unresolved blocker</strong> : admin/medical paperwork pending past D0.</li>
+        <li><strong>Late medical validation</strong> : physician sign-off slips after the cutoff.</li>
+        <li><strong>Occupancy spike</strong> : adds emergency-service load.</li>
+        <li><strong>Missing critical data</strong> : flags data-quality warnings instead of failing silently.</li>
       </ul>
       <p class="muted">Each click spawns a fresh patient (auto-suffixed name) so you can stack multiple stress events. Recommended demo flow: baseline patient → trigger preset → observe queue / occupancy / risk changes in the Operations Matrix.</p>
     </section>
@@ -162,9 +162,9 @@ data_quality_warnings: none</pre>
       <h2>9) Monitoring panel (forecast occupancy)</h2>
       <ul>
         <li>Now <strong>full page width</strong> on the Forecast page so X-axis labels and point values never overlap.</li>
-        <li><strong>Y axis</strong> — active-patient count with <em>nice-tick</em> spacing (0/2/4/… or 0/5/10/…).</li>
-        <li><strong>X axis</strong> — days from today; ~8 labels max, rotated, formatted <code>D5 04-17</code>.</li>
-        <li>Every data point has a count label permanently visible — no hover required.</li>
+        <li><strong>Y axis</strong> : active-patient count with <em>nice-tick</em> spacing (0/2/4/… or 0/5/10/…).</li>
+        <li><strong>X axis</strong> : days from today; ~8 labels max, rotated, formatted <code>D5 04-17</code>.</li>
+        <li>Every data point has a count label permanently visible, no hover required.</li>
         <li><strong>Focus service</strong> filter narrows the line to one service; <strong>Forecast horizon</strong> rescales the X axis (default = current max LOS in the registry).</li>
         <li>Canvas is rendered with <code>devicePixelRatio</code> scaling, so lines and text stay crisp on high-DPI displays.</li>
       </ul>
