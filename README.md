@@ -1,60 +1,64 @@
-# Saint-Luc Bouges G6 - Upstream Prototypes
+# Saint-Luc Bouges G6 — Upstream Prototypes
 
 Prototype stack for the **Upstream** sub-problem:
 
-> How might we better predict length of stay and improve communication with patients about their care pathway, to anticipate discharge earlier and more accurately?
+> How might we better predict LOS and improve discharge coordination early enough to reduce bed-flow friction while preserving care continuity?
 
-## What this project includes
+## Current web prototype (3 pages)
 
-### 1) Interactive web demo (GitHub Pages)
-- **File:** `index.html` (and `github-io/index.html`)
-- **What it does:**
-  - LOS forecast calculator
-  - confidence estimation
-  - early coordination flag
-  - D-2 / D-1 / D0 communication preview
-  - light/dark/auto theme + UI animations
-  - Group 6 credentials footer
+### 1) Forecast & Coordination (`index.html`)
+- Severity-based forecasting inputs (`severityType`, `severityScore`)  
+- Automatic mapping: `procedure type -> service + specialty`
+- Patient creation/update flow with explicit IDs
+- Billing-threshold risk (default threshold: `12:00`)
+- Communication outputs (nurse script + SMS timeline)
+- Role modes:
+  - planner (full panel)
+  - nurse (lighter view)
+- Scenario presets:
+  - late transport
+  - unresolved blocker
+  - late medical validation
+  - occupancy spike
+  - missing critical data
 
-### 2) Forecast engine (Python)
-- **File:** `los_forecast.py`
-- **What it does:**
-  - computes predicted LOS from patient attributes
-  - computes confidence score/label
-  - raises early coordination flag
+### 2) Operations Matrix (`operations.html`)
+- Service/chamber/bed occupancy matrix
+- Global view + per-service filtering
+- Bed drilldown with patient details
+- Bed lifecycle actions:
+  - assign waiting patient to free bed
+  - discharge occupied bed (frees bed instantly)
+- "Modify patient in Forecast page" handoff to edit flow
 
-### 3) Daily huddle board generator (Python)
-- **File:** `daily_huddle_board.py`
-- **Input:** `sample_patients.csv`
-- **Output:** `out/daily_huddle_board.html`
-- **What it does:**
-  - creates a sortable operational board for discharge planning
-  - prioritizes cases with lower confidence and stronger blockers
+### 3) Tutorial (`tutorial.html`)
+- Feature explanation and page-by-page guidance
+- Role explanation
+- Suggested demo flow for stakeholder presentations
 
-### 4) Communication flow generator (Python)
-- **File:** `communication_flow.py`
-- **Input:** `sample_patients.csv`
-- **Output:** `out/patient_message_schedule.csv`
-- **What it does:**
-  - generates message schedule templates for D-2 / D-1 / D0
+## Shared state model
 
-### 5) Publishing automation
-- **File:** `publish_github_pages.sh`
-- **What it does in one command:**
-  1. creates/uses `.venv`
-  2. regenerates Python outputs
-  3. commits changes
-  4. pushes to GitHub
-  5. enables GitHub Pages (if needed)
+The web prototype runs client-side and stores synchronized state in browser storage (`localStorage`):
+- key: `upstream-shared-state-v1`
+- shared across Forecast + Operations pages
+- includes patient registry and bed occupancy
 
-## How the site works
+This means actions on one page are reflected on the other page without backend.
 
-The page runs fully in-browser (no backend).  
-It reproduces the same rule logic as the Python forecast model:
-- base LOS by procedure
-- adjustments for age/comorbidity/social complexity/post-acute need
-- confidence and early-coordination evaluation
-- timeline communication triggers
+## Python artifacts (supporting evidence)
+
+### Forecast engine
+- `los_forecast.py`
+
+### Daily huddle board generator
+- `daily_huddle_board.py`
+- input: `sample_patients.csv`
+- output: `out/daily_huddle_board.html`
+
+### Communication flow generator
+- `communication_flow.py`
+- input: `sample_patients.csv`
+- output: `out/patient_message_schedule.csv`
 
 ## Quick start (Linux)
 
@@ -66,7 +70,7 @@ python daily_huddle_board.py
 python communication_flow.py
 ```
 
-Open:
+Open generated artifacts:
 - `out/daily_huddle_board.html`
 - `out/patient_message_schedule.csv`
 
@@ -75,20 +79,20 @@ Open:
 ```bash
 cd 6.Experiments/upstream-prototypes
 chmod +x publish_github_pages.sh
-./publish_github_pages.sh Lord-Melflam saint-luc-bouges-g6-upstream-prototypes /
+./publish_github_pages.sh Lord-Melflam saint-luc-bouges-g6-upstream-prototypes / "Your commit message"
 ```
 
-Expected URL:
+Live URL:
 
 `https://lord-melflam.github.io/saint-luc-bouges-g6-upstream-prototypes/`
 
-## What to do with the Python code
+## Workflow note for edits
 
-Use Python as your **data/prototype backend**, and the web page as your **demo frontend**:
+When a patient is opened from Operations for modification:
+- Forecast page enters edit mode (`?editPatient=...`)
+- user can:
+  - confirm update
+  - decline update
+  - optionally recompute LOS
 
-1. Keep editing `sample_patients.csv` to simulate realistic hospital cases.
-2. Re-run Python scripts to regenerate board + message schedule artifacts.
-3. Use generated outputs in your portfolio/slides as evidence of operational feasibility.
-4. Publish updates with `publish_github_pages.sh` whenever you iterate.
-
-In short: the Python files are not optional; they are our reproducible proof that the concept goes beyond slides.
+This supports operations-driven updates without forcing forecast recomputation every time.
