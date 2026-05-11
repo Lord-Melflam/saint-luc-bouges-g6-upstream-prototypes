@@ -100,6 +100,12 @@
     const STORAGE_KEY = "upstream-shared-state-v1";
     const THEME_KEY = "upstream-theme-mode";
     const LEGACY_THEME_KEY = "theme";
+    const BED_INVENTORY = {
+      orthopedics: { total: 24, chambers: { "Ortho-A": 8, "Ortho-B": 8, "Ortho-C": 8 } },
+      cardiology: { total: 18, chambers: { "Cardio-1": 9, "Cardio-2": 9 } },
+      emergency: { total: 20, chambers: { "ER-1": 10, "ER-2": 10 } },
+      pediatrics: { total: 12, chambers: { "Peds-1": 6, "Peds-2": 6 } }
+    };
     let themeMode = "auto";
     let selectedBedId = null;
 
@@ -130,6 +136,12 @@
       const matrix = document.getElementById("matrix");
       const serviceHtml = Object.keys(byService).sort().filter((service) => serviceFilter === "all" || service === serviceFilter).map((service) => {
         const chambers = byService[service];
+        const allBeds = [];
+        for (const ch of Object.keys(chambers)) allBeds.push(...chambers[ch]);
+        const occupied = allBeds.filter(b => b.occupiedBy).length;
+        const total = BED_INVENTORY[service]?.total || allBeds.length;
+        const occupancyPct = total > 0 ? Math.round((occupied / total) * 100) : 0;
+        const capStat = `<span class="muted" style="font-size:11px;">${occupied}/${total} (${occupancyPct}%)</span>`;
         const chamberHtml = Object.keys(chambers).sort().map((chamber) => {
           const beds = chambers[chamber].sort((a,b)=>a.number-b.number);
           const bedHtml = beds.map((bed) => {
@@ -140,7 +152,7 @@
           }).join("");
           return `<div class="chamber"><div class="chamber-title">${chamber}</div><div class="beds">${bedHtml}</div></div>`;
         }).join("");
-        return `<div class="service"><h3>${service}</h3><div class="service-grid">${chamberHtml}</div></div>`;
+        return `<div class="service"><h3>${service}</h3><div style="margin-bottom:8px;">${capStat}</div><div class="service-grid">${chamberHtml}</div></div>`;
       }).join("");
       matrix.innerHTML = serviceHtml || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
       renderBedDetails();

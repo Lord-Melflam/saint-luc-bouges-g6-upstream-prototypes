@@ -452,6 +452,7 @@
 
         <button id="btnAddSync" class="run" onclick="runApp()">Add patient & Sync</button>
         <button class="run secondary" type="button" style="margin-left:8px;" onclick="seedDemoData()" title="Add 4 example patients across services">Seed demo data</button>
+        <button class="run secondary" type="button" style="margin-left:8px;" onclick="loadOrthoDemo()" title="Load real orthopedic data (pilot test)">🏥 Load ortho demo</button>
         <button class="run secondary" type="button" style="margin-left:8px;" onclick="resetSharedState()" title="Wipe all simulated state">Reset state</button>
         <div id="editModePanel" class="hidden" style="margin-top:10px;">
           <label><input id="recomputeLosOnEdit" type="checkbox" /> Recompute LOS on update</label>
@@ -856,6 +857,86 @@
           globalForecast.push({ day: dayKey, count: globalCount });
         }
         return { occupancyRows, activePatients, thresholdAtRisk, afterThreshold, globalForecast, serviceForecast };
+      }
+    };
+
+    const CSVLoader = {
+      parseCSVData(csvText) {
+        const lines = csvText.trim().split('\n');
+        const headers = lines[0].split(',').map(h => h.trim());
+        const patients = [];
+        
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          if (!line.trim()) continue;
+          
+          const parts = line.split(',').map(p => p.trim());
+          const row = {};
+          headers.forEach((h, idx) => { row[h] = parts[idx] || ''; });
+          
+          if (!row['Médecins'] || !row['Motifs admission']) continue;
+          
+          const patientName = `${row['Médecins'].trim()} - ${row['Motifs admission'].substring(0, 20)}`;
+          const intensity = Math.max(
+            parseInt(row['Intensité J1']) || 0,
+            parseInt(row['Intensité J2']) || 0,
+            parseInt(row['Intensité J3']) || 0
+          );
+          const severity = Math.max(1, Math.min(15, intensity * 5));
+          
+          const durationMin = parseInt(row['Durée d\'utilisation du lit  (en min.)']) || 0;
+          const nights = parseInt(row['Nuits']) || 0;
+          let los = Math.ceil((durationMin / 60 + nights * 8) / 24) || 3;
+          los = Math.max(1, Math.min(20, los));
+          
+          patients.push({
+            name: patientName,
+            age: 65 + Math.floor(Math.random() * 15),
+            gender: Math.random() > 0.5 ? 'M' : 'F',
+            procedure: row['Motifs admission'].trim(),
+            unitService: 'orthopedics',
+            bedType: 'standard',
+            admissionType: row['HJ ou Lit (L)'].includes('HJ') ? 'day' : 'hospitalization',
+            doctor: row['Médecins'].trim(),
+            severity: severity,
+            csrCode: row['Colonne3'] || 'N/A'
+          });
+        }
+        return patients;
+      },
+
+      async loadOrthoDemo() {
+        try {
+          const response = await fetch('Base Ortho -V2(Raisons_ortho).csv');
+          if (!response.ok) throw new Error('CSV file not found');
+          const csv = await response.text();
+          const patients = this.parseCSVData(csv);
+          return patients.slice(0, 20);
+        } catch (e) {
+          console.warn('CSV not found, using embedded sample');
+          return this.getEmbeddedSample();
+        }
+      },
+
+      getEmbeddedSample() {
+        const sample = `ADM_DATE,ADM_TIME,Colonne1,Colonne2,Colonne3,Colonne4,Colonne5,Médecins,Motifs admission,Colonne8,Disciplines,Nuits,Intensité J1,Intensité J2,Intensité J3,Intensité J4,Intensité J5,PRIO LIT 1,PRIO LIT 2,PRIO LIT 3,HJ ou Lit (L),Durée d'utilisation du lit  (en min.)
+2070-11-23 00:00:00.000,1900-01-01 13:30:00.000,2021-02-04 00:00:00.000,1900-01-01 14:01:00.000,204103,32487814,120146,Bingen,Reprise Cotyle PTH (Gauche),6482,ORTHO ,7,3,1,2,1,2,6,5,7,L,60
+2021-01-05 00:00:00.000,1900-01-01 09:30:00.000,2021-01-15 00:00:00.000,1900-01-01 23:59:00.000,169759,32631318,120146,Bingen,PTH (Droit),2512,ORTHO ,2,3,2,1,2,,6,5,7,L,hospi
+2021-01-06 00:00:00.000,1900-01-01 10:00:00.000,2021-01-06 00:00:00.000,1900-01-01 20:00:00.000,1022109,32633109,120146,Bingen,Ablation matériel cheville (Droit),1002,ORTHO ,1,3,,,,,7,6,5,L,240
+2021-01-05 00:00:00.000,1900-01-01 06:45:00.000,2021-01-06 00:00:00.000,1900-01-01 21:00:00.000,600753,32633381,120146,Bingen,Ablation matériel rotule (Droit),1038,ORTHO ,1,3,2,,,,7,HJ,,L,360
+2021-01-10 00:00:00.000,1900-01-01 14:13:00.000,2021-02-12 00:00:00.000,1900-01-01 20:30:00.000,1097204,32635780,120146,Bingen,Ablation Plaque Tibia (Gauche),6468,ORTHO ,1,3,2,,,,7,5,6,L,hospi
+2021-01-11 00:00:00.000,1900-01-01 06:45:00.000,2021-01-13 00:00:00.000,1900-01-01 17:20:00.000,531298,32639611,120146,Bingen,Ablation matériel genou (Gauche),1020,ORTHO ,1,3,2,,,,7,5,6,L,60
+2021-01-05 00:00:00.000,1900-01-01 10:18:00.000,2021-01-06 00:00:00.000,1900-01-01 23:59:00.000,1104636,32639794,120146,Bingen,Ablation broche cheville HJC (Gauche),7274,ORTHO ,1,3,1,,,,7,5,6,HJ,hospi
+2021-01-05 00:00:00.000,1900-01-01 11:41:00.000,2021-01-21 00:00:00.000,1900-01-01 12:05:00.000,1114684,32641170,120146,Bingen,Ablation vis hanche (Gauche),1132,ORTHO ,1,3,2,,,,7,5,6,L,360
+2021-01-11 00:00:00.000,1900-01-01 06:45:00.000,2021-01-06 00:00:00.000,1900-01-01 23:59:00.000,521431,32642053,120146,Bingen,Fracture Plateau Tibial (Droit),1735,ORTHO ,3,3,2,1,,,7,5,6,L,360
+2021-01-27 00:00:00.000,1900-01-01 11:13:00.000,2021-01-05 00:00:00.000,1900-01-01 23:59:00.000,586273,32644274,120146,Bingen,Fracture Péri-prothétique (Droit),2403,ORTHO ,5,3,1,2,1,2,5,6,7,L,hospi
+2021-01-05 00:00:00.000,1900-01-01 08:54:00.000,2021-03-08 00:00:00.000,1900-01-01 14:01:00.000,1112080,32645979,120146,Bingen,Ablation plaque fémur (Gauche),1075,ORTHO ,1,3,,,,,7,5,6,L,240
+2021-01-06 00:00:00.000,1900-01-01 10:01:00.000,2021-02-19 00:00:00.000,1900-01-01 10:24:00.000,601788,32645989,120146,Bingen,Reprise PTH (Droit),2798,ORTHO ,3,3,1,2,1,,5,6,,L,360
+2021-01-05 00:00:00.000,1900-01-01 06:55:00.000,2021-01-11 00:00:00.000,1900-01-01 15:30:00.000,786678,32646064,120146,Bingen,Suture Tendon Quadriceps (Droit),3412,ORTHO ,1,3,2,,,,7,5,6,L,hospi
+2021-01-12 00:00:00.000,1900-01-01 07:17:00.000,2021-01-29 00:00:00.000,1900-01-01 14:45:00.000,75993,32663175,120146,Bingen,Ablation Fixateur Externe Cheville (Droit),898,ORTHO ,1,3,2,,,,7,5,6,L,60
+2021-05-19 00:00:00.000,1900-01-01 07:47:00.000,2021-02-10 00:00:00.000,1900-01-01 18:00:00.000,751802,32663187,120146,Bingen,Ablation vis pied (Droit),1139,ORTHO ,1,3,2,,,,7,5,6,L,hospi
+2021-01-12 00:00:00.000,1900-01-01 11:23:00.000,2021-02-10 00:00:00.000,1900-01-01 19:00:00.000,272520,32668219,120146,Bingen,Ablation matériel tibia (Gauche),1041,ORTHO ,1,3,2,,,,7,,,L,360`;
+        return this.parseCSVData(sample);
       }
     };
 
@@ -1563,6 +1644,42 @@ data_quality_warnings: ${warningLine}`;
           bedPolicy: seed.bedPolicy
         };
         StateStore.upsertFromInput(input);
+      }
+    }
+
+    async function loadOrthoDemo() {
+      if (!confirm("Load 20 real orthopedic patients from CSV?\nThis will ADD to existing patients (not replace).")) return;
+      try {
+        const csvPatients = await CSVLoader.loadOrthoDemo();
+        let added = 0;
+        for (const csvPat of csvPatients) {
+          const input = {
+            procedure: csvPat.procedure,
+            age: csvPat.age,
+            gender: csvPat.gender,
+            severityType: "charlson",
+            severityScore: csvPat.severity,
+            social: false,
+            postacute: false,
+            patientName: csvPat.name,
+            unitService: csvPat.unitService,
+            specialty: "orthopedics",
+            procedureSubtype: csvPat.procedure.substring(0, 30),
+            idagCode: csvPat.csrCode,
+            dmgGroup: "",
+            blockerCategory: "none",
+            blockerDetail: "",
+            departureTime: "11:00",
+            bedType: csvPat.bedType,
+            bedPolicy: "strict"
+          };
+          StateStore.upsertFromInput(input);
+          added++;
+        }
+        document.getElementById("result").textContent = `✓ Loaded ${added} ortho patients from CSV`;
+        setTimeout(() => { document.getElementById("result").textContent = ""; }, 3000);
+      } catch (e) {
+        alert(`Error loading ortho data: ${e.message}`);
       }
     }
 
