@@ -121,15 +121,6 @@
     function setTheme(theme){if(!["dark","light","auto"].includes(theme))return;themeMode=theme;localStorage.setItem(THEME_KEY,themeMode);applyTheme(themeMode);}
     function loadTheme(){const saved=localStorage.getItem(THEME_KEY);const legacy=localStorage.getItem(LEGACY_THEME_KEY);themeMode=["dark","light","auto"].includes(saved||legacy)?(saved||legacy):"auto";localStorage.setItem(THEME_KEY,themeMode);localStorage.removeItem(LEGACY_THEME_KEY);applyTheme(themeMode);}
 
-    function showToast(message, type="info") {
-      const toast = document.createElement("div");
-      const bgColor = type === "success" ? "rgba(77,191,140,.9)" : type === "error" ? "rgba(255,100,100,.9)" : "rgba(100,150,200,.9)";
-      toast.style.cssText = `position:fixed;bottom:20px;right:20px;background:${bgColor};color:white;padding:12px 16px;border-radius:8px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.3)`;
-      toast.textContent = message;
-      document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 2500);
-    }
-
     function loadState(){
       try{
         const raw=localStorage.getItem(STORAGE_KEY);
@@ -144,7 +135,6 @@
       const state = loadState();
       const byService = {};
       for (const bed of state.beds || []) {
-        if (bed.service === RESERVE_UNIT) continue;
         byService[bed.service] ||= {};
         byService[bed.service][bed.chamber] ||= [];
         byService[bed.service][bed.chamber].push(bed);
@@ -153,6 +143,8 @@
       const matrix = document.getElementById("matrix");
       let allServices = Object.keys(byService).sort();
       if (serviceFilter !== "all") allServices = allServices.filter(s => s === serviceFilter);
+      
+      // Render regular services
       const serviceHtml = allServices.map((service) => {
         const chambers = byService[service];
         const allBeds = [];
@@ -174,15 +166,24 @@
           }).join("");
           return `<div class="chamber"><div class="chamber-title">${chamber}</div><div class="beds">${bedHtml}</div></div>`;
         }).join("");
-        let reserveIndicator = "";
-        if (addedReserve > 0) {
-          reserveIndicator = `<div style="margin-top:8px;padding:8px;background:rgba(255,165,0,.15);border:1px solid rgba(255,165,0,.4);border-radius:8px;"><span class="muted" style="font-size:11px;">📌 <strong style="color:var(--accent2);">${addedReserve} reserve bed(s) assigned</strong></span></div>`;
-        }
-        return `<div class="service"><h3>${service}</h3><div style="margin-bottom:8px;">${capStat}</div><div class="service-grid">${chamberHtml}</div>${reserveIndicator}</div>`;
+        let reserve = addedReserve > 0 ? `<div style="margin-top:8px;padding:8px;border:1px dashed rgba(255,165,0,.5);border-radius:8px;"><span class="muted" style="font-size:11px;">📌 ${addedReserve} reserve bed(s) assigned to ${service}</span></div>` : "";
+        return `<div class="service"><h3>${service}</h3><div style="margin-bottom:8px;">${capStat}</div><div class="service-grid">${chamberHtml}</div>${reserve}</div>`;
       }).join("");
-      const totalAssigned = Object.values(reserveAssignments).reduce((a,b)=>a+b, 0);
-      const availableReserve = RESERVE_TOTAL - totalAssigned;
-      const reserveHtml = availableReserve > 0 || totalAssigned > 0 ? `<div class="service" style="border:2px dashed rgba(255,165,0,.3);opacity:0.8;"><h3>📌 Reserve Pool</h3><div style="padding:12px;text-align:center;"><span class="muted"><strong>${availableReserve}/${RESERVE_TOTAL}</strong> beds available</span></div></div>` : "";
+      
+      // Render reserve unit
+      const reserveBeds = (state.beds || []).filter(b => b.service === RESERVE_UNIT);
+      const reserveHtml = (() => {
+        if (!reserveBeds.length && Object.values(reserveAssignments).every(v => v === 0)) return "";
+        const rbeds = reserveBeds.map((bed) => {
+          const assignedTo = Object.entries(reserveAssignments).find(([_, count]) => count > 0)?.[0];
+          const cls = assignedTo ? "reserved-assigned" : "reserved";
+          const selected = bed.bedId === selectedBedId ? " selected" : "";
+          const label = assignedTo ? `${bed.number}→${assignedTo}` : bed.number;
+          return `<button class="bed ${cls}${selected} compact" onclick="selectBed('${bed.bedId}')" title="${assignedTo ? 'Assigned to ' + assignedTo : 'Free reserve bed'}">#${label}<br>reserve</button>`;
+        }).join("");
+        return `<div class="service" style="border:2px dashed rgba(255,165,0,.3);"><h3>📌 Reserve Unit</h3><div class="chamber"><div class="beds">${rbeds}</div></div></div>`;
+      })();
+      
       matrix.innerHTML = (serviceHtml + reserveHtml) || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
       renderBedDetails();
       renderMonitoring();
@@ -365,7 +366,6 @@
       state.waitingQueue = (state.waitingQueue || []).filter((q)=>q.patientId!==patientId);
       p.bedId=null;
       saveState(state);
-      showToast(`✓ ${p.name} discharged • bed freed`, "success");
       renderMatrix();
     }
 
@@ -385,7 +385,6 @@
       patient.status="booked";
       state.waitingQueue = (state.waitingQueue || []).filter((q)=>q.patientId!==patientId);
       saveState(state);
-      showToast(`✓ ${patient.name} assigned to bed ${bed.bedId}`, "success");
       renderMatrix();
     }
 
@@ -463,27 +462,26 @@
     }
 
     function assignReserveBed(reserveBedId, service) {
-      if (!service) { showToast("❌ Select a service", "error"); return; }
+      if (!service) { alert("Select a service"); return; }
       const state = loadState();
       const bed = state.beds.find(b => b.bedId === reserveBedId);
       if (!bed || bed.service !== RESERVE_UNIT) return;
       
       const inventory = BED_INVENTORY[service];
-      if (!inventory) { showToast("❌ Invalid service", "error"); return; }
+      if (!inventory) { alert("Invalid service"); return; }
       
       const currentReserve = reserveAssignments[service] || 0;
-      if (currentReserve >= 2) { showToast("❌ Maximum 2 reserve beds per service", "error"); return; }
+      if (currentReserve >= 2) { alert("Maximum 2 reserve beds per service"); return; }
       
       reserveAssignments[service] = currentReserve + 1;
       renderMatrix();
-      showToast(`✓ 1 reserve bed assigned to ${service}`, "success");
+      alert(`1 reserve bed assigned to ${service}`);
     }
 
     function unassignReserveBed(service) {
       const current = reserveAssignments[service] || 0;
       if (current === 0) return;
       reserveAssignments[service] = current - 1;
-      showToast(`✓ 1 reserve bed unassigned from ${service}`, "success");
       renderMatrix();
     }
 
@@ -509,30 +507,6 @@
       }
     }
     initReserveBeds();
-    
-    function initServiceBeds() {
-      const state = loadState();
-      for (const [service, inventory] of Object.entries(BED_INVENTORY)) {
-        const existing = (state.beds || []).filter(b => b.service === service && b.type !== "reserve");
-        if (existing.length === 0) {
-          let bedNum = 1;
-          for (const [chamber, count] of Object.entries(inventory.chambers || {})) {
-            for (let i = 0; i < count; i++) {
-              state.beds.push({
-                bedId: `${service.slice(0, 3).toUpperCase()}-${bedNum}`,
-                service: service,
-                chamber: chamber,
-                number: bedNum++,
-                type: bedNum <= 10 ? "standard" : "standard",
-                occupiedBy: null
-              });
-            }
-          }
-        }
-      }
-      saveState(state);
-    }
-    initServiceBeds();
     
     initServiceFilter();
     renderMatrix();
