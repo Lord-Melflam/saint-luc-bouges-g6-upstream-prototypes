@@ -169,6 +169,135 @@ data_quality_warnings: none</pre>
         <li>Canvas is rendered with <code>devicePixelRatio</code> scaling, so lines and text stay crisp on high-DPI displays.</li>
       </ul>
     </section>
+    <section class="card">
+      <h2>10) Bed types explained</h2>
+      <p class="muted">Every bed in the system has a type that determines care capability and cost:</p>
+      <ul>
+        <li><strong>Standard</strong> <span class="info" data-tip="Basic monitoring, IV access, standard nursing care. Suitable for recovery, post-operative observation.">ℹ</span> : baseline bed type; supports most patients. Cost baseline.</li>
+        <li><strong>Monitoring</strong> <span class="info" data-tip="Continuous vital-sign monitoring (ECG, pulse ox, BP). For cardiac, stroke, high-acuity patients.">ℹ</span> : equipped with continuous vital signs. For cardiac, stroke, or escalated acuity. +15% cost.</li>
+        <li><strong>Premium</strong> <span class="info" data-tip="Private room, advanced nursing, specialized equipment. For VIP, infectious isolation, or palliative care.">ℹ</span> : private room, specialized nursing, isolation capability. For VIP, infectious, or palliative. +30% cost.</li>
+      </ul>
+      <p class="muted"><strong>Selection</strong>: When booking a patient, choose a bed type based on their condition. If the preferred type is not available in the selected service, the patient is queued with a reason (e.g., "monitoring bed unavailable in emergency"). Reserve beds can help fill gaps.</p>
+    </section>
+
+    <section class="card">
+      <h2>11) Severity index (Charlson Comorbidity Score)</h2>
+      <p class="muted">The <strong>Charlson score</strong> quantifies a patient's medical complexity based on comorbidities:</p>
+      <ul>
+        <li><strong>Scale</strong> : 0–15 (higher = more severe).</li>
+        <li><strong>0–2</strong> : low risk. Most common (60%+ of admissions).</li>
+        <li><strong>3–5</strong> : moderate risk. Increased monitoring recommended.</li>
+        <li><strong>6–15</strong> : high risk. Requires frequent escalation checks, dedicated nursing.</li>
+      </ul>
+      <p class="muted"><strong>Impact on LOS</strong> : The system multiplies base LOS by a severity factor (1.0 + severity × 0.1), so a Charlson=4 patient stays ~40% longer. A Charlson=8 patient doubles the baseline LOS.</p>
+      <p class="muted"><strong>In the system</strong>: Input the intensity (1–5 scale) in the Forecast & Input Panel, and the Charlson score is auto-computed and displayed. This feeds the LOS prediction and threshold risk assessment.</p>
+    </section>
+
+    <section class="card">
+      <h2>12) LOS (Length of Stay) calculation</h2>
+      <p class="muted">The system predicts how many days a patient will occupy a bed:</p>
+      <pre><strong>Formula:</strong>
+Base LOS (procedure-specific) × Severity factor × Gender adjustment
+Severity factor = 1.0 + (Charlson score × 0.1)
+Gender adjustment = 1.05 if female, 1.0 if male  (typical clinical finding)</pre>
+      <p class="muted"><strong>Example</strong> : Hip replacement (base 5 days) + Charlson 4 + female = 5 × 1.4 × 1.05 = 7.35 days → rounds to 7 days.</p>
+      <p class="muted"><strong>In practice</strong> :
+        <ul>
+          <li>LOS is computed at booking time.</li>
+          <li>It drives the expected discharge date (admission date + LOS).</li>
+          <li>It is <strong>not</strong> automatically recomputed if you update the patient later (to avoid phantom discharges). Click "Recompute LOS" manually in edit mode if patient comorbidity changes.</li>
+          <li>The monitoring chart uses the maximum LOS in the current cohort as the default forecast horizon.</li>
+        </ul>
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>13) Reserve beds system</h2>
+      <p class="muted">When a service reaches full capacity (all 20 beds occupied), you can assign <strong>reserve beds</strong> to temporarily expand it:</p>
+      <ul>
+        <li><strong>Total pool</strong> : 12 reserve beds (2 per service × 6 services). Shown in the <strong>Reserve Pool</strong> section at the bottom of the Operations Matrix.</li>
+        <li><strong>Per-service limit</strong> : max 2 reserve beds assigned to any single service at a time.</li>
+        <li><strong>Visual indicator</strong> : Assigned reserves appear as an orange badge under the service name. The Reserve Pool shows remaining available beds.</li>
+        <li><strong>Workflow</strong> :
+          <ol>
+            <li>Click a reserve bed in the Reserve Pool section.</li>
+            <li>A dropdown appears asking which service needs it.</li>
+            <li>Confirm the assignment. The reserve bed is now added to that service's capacity (21/20 becomes 22/20).</li>
+            <li>To unassign, click a free bed in that service and choose "Unassign 1 reserve bed" if reserves are assigned. The bed returns to the pool.</li>
+          </ol>
+        </li>
+        <li><strong>Data tracking</strong> : Reserve assignments persist in localStorage. Reload the page, and the assignments remain intact until you click Reset.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>14) Auto-assign feature (queue management)</h2>
+      <p class="muted">If the queue grows (many patients waiting for bed assignment), use the <strong>Auto-assign from queue</strong> button:</p>
+      <ul>
+        <li><strong>What it does</strong> : Scans the waiting queue and tries to place each patient in the next available free bed in their preferred service.</li>
+        <li><strong>Priority</strong> : Processes queue in order (FIFO by timestamp). If no beds are available in the preferred service, the patient remains queued.</li>
+        <li><strong>Outcome</strong> : Shows a toast notification with the count of successfully assigned patients (e.g., "✓ Auto-assigned 3 patient(s)"). The Operations Matrix updates in real-time.</li>
+        <li><strong>When to use</strong> : During shift changes, occupancy spikes, or after bulk discharge (e.g., end-of-morning-shift). Reduces manual clicking for routine placements.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>15) Patient status workflow</h2>
+      <p class="muted">Every patient progresses through states:</p>
+      <ul>
+        <li><strong>pending</strong> : just created, awaiting bed assignment or confirmation.</li>
+        <li><strong>queued</strong> : preferred bed type/service unavailable; waiting for manual assignment or reserve expansion.</li>
+        <li><strong>booked</strong> : assigned to a bed; monitoring active.</li>
+        <li><strong>discharged</strong> : patient left; bed is now free for next admission.</li>
+      </ul>
+      <p class="muted"><strong>Transitions</strong> : pending → queued (if no bed available) or pending → booked (if bed available). booked → discharged (click "Discharge patient" in Operations Matrix). queued → booked (manual assignment or auto-assign). Editing a patient does not change state.</p>
+    </section>
+
+    <section class="card">
+      <h2>16) Error handling & data consistency</h2>
+      <p class="muted">The system validates data to prevent inconsistencies:</p>
+      <ul>
+        <li><strong>Duplicate prevention</strong> : On patient creation, the system checks for duplicates (same name + age + gender). If found, a warning is shown and the patient is not added.</li>
+        <li><strong>Bed conflicts</strong> : If a bed is already occupied, you cannot reassign it. The Operations Matrix prevents double-booking.</li>
+        <li><strong>Queue ordering</strong> : Patients in the queue are ordered by timestamp (earliest first). If you manually assign a queued patient, it is removed from the queue automatically.</li>
+        <li><strong>Threshold enforcement</strong> : If the expected discharge time slips past 12:00, the threshold status flips from <code>safe</code> → <code>warning</code> → <code>critical</code>. The billing loss risk is set to <code>yes</code> if discharge is after cutoff.</li>
+        <li><strong>Data quality warnings</strong> : Flagged in the patient detail if missing procedure subtype, invalid gender, or bed unavailable. These do <em>not</em> block patient creation; they are informational.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>17) Communication outputs</h2>
+      <p class="muted">For a selected patient, the <strong>Communication Hub</strong> generates ready-to-use handover scripts:</p>
+      <pre><strong>Nurse Script (handover-ready):</strong>
+Patient: Patient X (P-LIVE-001-7)
+Service: orthopedics | Bed: O1-03
+Procedure: hip replacement / primary
+Severity: charlson=4
+Expected discharge: 2026-05-12 at 11:00
+Threshold (12:00) risk: INFO
+
+1) Confirm blocker (none) and checklist completion.
+2) Escalate before 2026-05-11 if blocker persists.
+3) Keep departure before 12:00.</pre>
+      <p class="muted"><strong>D-2 / D-1 / D0 timeline</strong> (discharge countdown):</p>
+      <pre>D-2 (2026-05-10): discharge target 2026-05-12. Prepare exit orders.
+D-1 (2026-05-11): confirmation pending. Final checklist.
+D0 (2026-05-12): planned departure 11:00. Discharge readiness.</pre>
+      <p class="muted">Use these texts in SMS, email, or in-person handoff to align the care team on timing and blockers.</p>
+    </section>
+
+    <section class="card">
+      <h2>18) Tips & troubleshooting</h2>
+      <ul>
+        <li><strong>Patient appears in multiple panels</strong> : By design. Selection is global; clicking any patient in the Registry, Queue, Threshold list, or Nurse station syncs all panels.</li>
+        <li><strong>Why is my patient still queued after booking?</strong> : Check the bed type. If you selected a "monitoring" bed but none are available in the chosen service, the system queues the patient. Assign a standard bed manually, or request a reserve bed and reassign.</li>
+        <li><strong>Occupancy chart not updating</strong> : Toggle the service filter (e.g., from "Global" to "Cardiology" and back). The chart refreshes on filter change.</li>
+        <li><strong>Lost patient data on page reload?</strong> : All data is saved to localStorage. If the browser's local storage is cleared (privacy mode, cookie deletion), data is lost. The "Reset" button in Operations Matrix also clears everything; use it only for testing.</li>
+        <li><strong>Reserve beds won't assign</strong> : Ensure the target service is at or above capacity (20/20 or higher). Reserves only assign to full services. Also, no more than 2 per service.</li>
+        <li><strong>Toast notifications not showing</strong> : Check browser DevTools console for errors. Toasts appear bottom-right for 2.5 seconds and auto-hide.</li>
+      </ul>
+    </section>
+
   </div>
 
   <script>

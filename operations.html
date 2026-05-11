@@ -97,6 +97,7 @@
         <div id="bedDetails" class="muted">Select a bed in the matrix.</div>
         <h3 style="margin-top:14px;">Queue overview</h3>
         <div id="queuePanelOps" class="muted"></div>
+        <button class="action" style="width:100%;margin-top:10px;" onclick="autoAssignQueuedPatients()">⚡ Auto-assign from queue</button>
       </aside>
     </div>
   </div>
@@ -185,7 +186,15 @@
       }).join("");
       const totalAssigned = Object.values(reserveAssignments).reduce((a,b)=>a+b, 0);
       const availableReserve = RESERVE_TOTAL - totalAssigned;
-      const reserveHtml = availableReserve > 0 || totalAssigned > 0 ? `<div class="service" style="border:2px dashed rgba(255,165,0,.3);opacity:0.8;"><h3>📌 Reserve Pool</h3><div style="padding:12px;text-align:center;"><span class="muted"><strong>${availableReserve}/${RESERVE_TOTAL}</strong> beds available</span></div></div>` : "";
+      const reserveBeds = (state.beds || []).filter(b => b.service === RESERVE_UNIT);
+      const reserveBedHtml = reserveBeds.map((bed) => {
+        const selected = bed.bedId === selectedBedId ? " selected" : "";
+        const assigned = Object.entries(reserveAssignments).find(([_, count]) => count > 0)?.[0];
+        const isAssigned = assigned && Object.keys(reserveAssignments).some(svc => reserveAssignments[svc] > 0);
+        const cls = isAssigned ? "reserved-assigned" : "reserved";
+        return `<button class="bed ${cls}${selected} compact" onclick="selectBed('${bed.bedId}')" title="Reserve bed">#${bed.number}<br>pool</button>`;
+      }).join("");
+      const reserveHtml = reserveBeds.length > 0 ? `<div class="service" style="border:2px dashed rgba(255,165,0,.3);"><h3>📌 Reserve Pool (${availableReserve}/${RESERVE_TOTAL} available)</h3><div class="chamber" style="margin-top:10px;"><div class="beds">${reserveBedHtml}</div></div></div>` : "";
       matrix.innerHTML = (serviceHtml + reserveHtml) || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
       renderBedDetails();
       renderMonitoring();
@@ -370,6 +379,46 @@
       saveState(state);
       showToast(`✓ ${p.name} discharged • bed freed`, "success");
       renderMatrix();
+    }
+
+    function autoAssignQueuedPatients() {
+      const state = loadState();
+      const queue = state.waitingQueue || [];
+      if (queue.length === 0) { showToast("✓ Queue is empty", "info"); return; }
+      
+      let assigned = 0;
+      const assignments = [];
+      
+      for (const queuedPatient of queue) {
+        const patient = state.patients.find(p => p.patientId === queuedPatient.patientId);
+        if (!patient) continue;
+        
+        // Find nearest unit with free bed
+        const targetService = queuedPatient.service || patient.unitService;
+        const freeBeds = (state.beds || []).filter(b => 
+          b.service === targetService && !b.occupiedBy && b.service !== RESERVE_UNIT
+        );
+        
+        if (freeBeds.length > 0) {
+          const bed = freeBeds[0];
+          bed.occupiedBy = patient.patientId;
+          patient.bedId = bed.bedId;
+          patient.status = "booked";
+          assignments.push(`${patient.name} → ${bed.bedId}`);
+          assigned++;
+        }
+      }
+      
+      if (assigned > 0) {
+        state.waitingQueue = (state.waitingQueue || []).filter(q => 
+          !state.patients.find(p => p.patientId === q.patientId && p.bedId)
+        );
+        saveState(state);
+        showToast(`✓ Auto-assigned ${assigned} patient(s)`, "success");
+        renderMatrix();
+      } else {
+        showToast("❌ No available beds for queue", "error");
+      }
     }
 
     function assignPatientToBed(){
