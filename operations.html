@@ -43,7 +43,10 @@
     .bed{border:1px solid var(--border);border-radius:8px;padding:7px 8px;cursor:pointer;font-size:12px;min-width:100px;text-align:center}
     .bed.free{background:rgba(77,191,140,.15)}
     .bed.occupied{background:rgba(210,138,58,.2)}
+    .bed.reserved{background:rgba(255,165,0,.15);border-color:rgba(255,165,0,.4)}
+    .bed.reserved-assigned{background:rgba(255,165,0,.25);border-color:rgba(255,165,0,.6)}
     .bed.selected{outline:2px solid var(--accent)}
+    .bed.compact{padding:4px 6px;font-size:10px;min-width:70px}
     .muted{color:var(--muted)}
     .status-ok{color:var(--ok)} .status-med{color:var(--warn)} .status-risk{color:var(--risk)}
     .row{display:flex;justify-content:space-between;gap:10px;border:1px dashed var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:13px}
@@ -51,6 +54,7 @@
     select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);padding:8px}
     .small{font-size:12px;color:var(--muted);margin-top:6px}
     canvas{border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.15)}
+    .reserve-badge{display:inline-block;background:rgba(255,165,0,.3);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px}
   </style>
 </head>
 <body>
@@ -101,13 +105,16 @@
     const THEME_KEY = "upstream-theme-mode";
     const LEGACY_THEME_KEY = "theme";
     const BED_INVENTORY = {
-      orthopedics: { total: 24, chambers: { "Ortho-A": 8, "Ortho-B": 8, "Ortho-C": 8 } },
-      cardiology: { total: 18, chambers: { "Cardio-1": 9, "Cardio-2": 9 } },
+      orthopedics: { total: 20, chambers: { "Ortho-A": 7, "Ortho-B": 7, "Ortho-C": 6 } },
+      cardiology: { total: 20, chambers: { "Cardio-1": 10, "Cardio-2": 10 } },
       emergency: { total: 20, chambers: { "ER-1": 10, "ER-2": 10 } },
-      pediatrics: { total: 12, chambers: { "Peds-1": 6, "Peds-2": 6 } }
+      pediatrics: { total: 20, chambers: { "Peds-1": 10, "Peds-2": 10 } }
     };
+    const RESERVE_UNIT = "reserve-beds";
+    const RESERVE_TOTAL = 8; // 2 * 4 services
     let themeMode = "auto";
     let selectedBedId = null;
+    let reserveAssignments = {}; // Track which unit each reserve bed is assigned to
 
     function resolveAutoTheme(){const h=new Date().getHours();return (h>=7&&h<19)?"light":"dark";}
     function applyTheme(mode){document.documentElement.setAttribute("data-theme",mode==="auto"?resolveAutoTheme():mode);}
@@ -134,27 +141,50 @@
       }
       const serviceFilter = document.getElementById("serviceView").value;
       const matrix = document.getElementById("matrix");
-      const serviceHtml = Object.keys(byService).sort().filter((service) => serviceFilter === "all" || service === serviceFilter).map((service) => {
+      let allServices = Object.keys(byService).sort();
+      if (serviceFilter !== "all") allServices = allServices.filter(s => s === serviceFilter);
+      
+      // Render regular services
+      const serviceHtml = allServices.map((service) => {
         const chambers = byService[service];
         const allBeds = [];
         for (const ch of Object.keys(chambers)) allBeds.push(...chambers[ch]);
         const occupied = allBeds.filter(b => b.occupiedBy).length;
-        const total = BED_INVENTORY[service]?.total || allBeds.length;
+        const addedReserve = reserveAssignments[service] || 0;
+        const total = (BED_INVENTORY[service]?.total || allBeds.length) + addedReserve;
         const occupancyPct = total > 0 ? Math.round((occupied / total) * 100) : 0;
         const capStat = `<span class="muted" style="font-size:11px;">${occupied}/${total} (${occupancyPct}%)</span>`;
+        const useCompact = allBeds.length > 12;
         const chamberHtml = Object.keys(chambers).sort().map((chamber) => {
           const beds = chambers[chamber].sort((a,b)=>a.number-b.number);
           const bedHtml = beds.map((bed) => {
             const occ = !!bed.occupiedBy;
             const cls = occ ? "occupied" : "free";
             const selected = bed.bedId === selectedBedId ? " selected" : "";
-            return `<button class="bed ${cls}${selected}" onclick="selectBed('${bed.bedId}')">#${bed.number} • ${bed.type}<br>${occ ? "occupied" : "free"}</button>`;
+            const compact = useCompact ? " compact" : "";
+            return `<button class="bed ${cls}${selected}${compact}" onclick="selectBed('${bed.bedId}')">#${bed.number}${!useCompact ? ' • ' + bed.type : ''}<br>${occ ? "occ" : "free"}</button>`;
           }).join("");
           return `<div class="chamber"><div class="chamber-title">${chamber}</div><div class="beds">${bedHtml}</div></div>`;
         }).join("");
-        return `<div class="service"><h3>${service}</h3><div style="margin-bottom:8px;">${capStat}</div><div class="service-grid">${chamberHtml}</div></div>`;
+        let reserve = addedReserve > 0 ? `<div style="margin-top:8px;padding:8px;border:1px dashed rgba(255,165,0,.5);border-radius:8px;"><span class="muted" style="font-size:11px;">📌 ${addedReserve} reserve bed(s) assigned to ${service}</span></div>` : "";
+        return `<div class="service"><h3>${service}</h3><div style="margin-bottom:8px;">${capStat}</div><div class="service-grid">${chamberHtml}</div>${reserve}</div>`;
       }).join("");
-      matrix.innerHTML = serviceHtml || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
+      
+      // Render reserve unit
+      const reserveBeds = (state.beds || []).filter(b => b.service === RESERVE_UNIT);
+      const reserveHtml = (() => {
+        if (!reserveBeds.length && Object.values(reserveAssignments).every(v => v === 0)) return "";
+        const rbeds = reserveBeds.map((bed) => {
+          const assignedTo = Object.entries(reserveAssignments).find(([_, count]) => count > 0)?.[0];
+          const cls = assignedTo ? "reserved-assigned" : "reserved";
+          const selected = bed.bedId === selectedBedId ? " selected" : "";
+          const label = assignedTo ? `${bed.number}→${assignedTo}` : bed.number;
+          return `<button class="bed ${cls}${selected} compact" onclick="selectBed('${bed.bedId}')" title="${assignedTo ? 'Assigned to ' + assignedTo : 'Free reserve bed'}">#${label}<br>reserve</button>`;
+        }).join("");
+        return `<div class="service" style="border:2px dashed rgba(255,165,0,.3);"><h3>📌 Reserve Unit</h3><div class="chamber"><div class="beds">${rbeds}</div></div></div>`;
+      })();
+      
+      matrix.innerHTML = (serviceHtml + reserveHtml) || "<p class='muted'>No bed model yet. Open index and book a patient first.</p>";
       renderBedDetails();
       renderMonitoring();
       const queueRows = (state.waitingQueue || []).map((q) =>
@@ -363,6 +393,26 @@
       const host=document.getElementById("bedDetails");
       const bed=(state.beds||[]).find((b)=>b.bedId===selectedBedId);
       if(!bed){host.textContent="Select a bed in the matrix.";return;}
+      
+      // Handle reserve bed
+      if(bed.service === RESERVE_UNIT){
+        const services = Object.keys(BED_INVENTORY).sort();
+        const options = services.map((s) => `<option value="${s}">${s}</option>`).join("");
+        host.innerHTML=`
+          <div class="row"><strong>Bed</strong><span>${bed.bedId} (reserve)</span></div>
+          <div class="row"><strong>Status</strong><span class="status-ok">FREE RESERVE</span></div>
+          <label class="muted">Assign to service (when full + max 2)</label>
+          <select id="assignReserveService">
+            <option value="">Select service</option>
+            ${options}
+          </select>
+          <div style="height:8px;"></div>
+          <button class="action" onclick="assignReserveBed('${bed.bedId}', document.getElementById('assignReserveService').value)">Assign reserve bed</button>
+        `;
+        return;
+      }
+      
+      // Handle regular bed
       const patient=(state.patients||[]).find((p)=>p.patientId===bed.occupiedBy);
       if(patient){
         host.innerHTML=`
@@ -379,6 +429,8 @@
       } else {
         const waiting=(state.patients||[]).filter((p)=>!p.bedId && p.status!=="discharged");
         const options=waiting.map((p)=>`<option value="${p.patientId}">${p.patientId} • ${p.name} (${p.unitService})</option>`).join("");
+        const hasReserveAssigned = (reserveAssignments[bed.service] || 0) > 0;
+        const unassignBtn = hasReserveAssigned ? `<button class="action" style="background:rgba(255,100,100,.6);" onclick="unassignReserveBed('${bed.service}')">Unassign 1 reserve bed</button>` : "";
         host.innerHTML=`
           <div class="row"><strong>Bed</strong><span>${bed.bedId} (${bed.type})</span></div>
           <div class="row"><strong>Status</strong><span class="status-ok">FREE</span></div>
@@ -389,6 +441,7 @@
           </select>
           <div style="height:8px;"></div>
           <button class="action" onclick="assignPatientToBed()">Assign to selected bed</button>
+          ${hasReserveAssigned ? '<div style="height:8px;"></div>' + unassignBtn : ''}
         `;
       }
     }
@@ -408,8 +461,53 @@
       select.innerHTML = `<option value="all">Global view (all services)</option>` + services.map((s) => `<option value="${s}">${s}</option>`).join("");
     }
 
+    function assignReserveBed(reserveBedId, service) {
+      if (!service) { alert("Select a service"); return; }
+      const state = loadState();
+      const bed = state.beds.find(b => b.bedId === reserveBedId);
+      if (!bed || bed.service !== RESERVE_UNIT) return;
+      
+      const inventory = BED_INVENTORY[service];
+      if (!inventory) { alert("Invalid service"); return; }
+      
+      const currentReserve = reserveAssignments[service] || 0;
+      if (currentReserve >= 2) { alert("Maximum 2 reserve beds per service"); return; }
+      
+      reserveAssignments[service] = currentReserve + 1;
+      renderMatrix();
+      alert(`1 reserve bed assigned to ${service}`);
+    }
+
+    function unassignReserveBed(service) {
+      const current = reserveAssignments[service] || 0;
+      if (current === 0) return;
+      reserveAssignments[service] = current - 1;
+      renderMatrix();
+    }
+
     loadTheme();
     setInterval(()=>{if(themeMode==="auto")applyTheme("auto");},60000);
+    
+    // Initialize reserve beds if not already present
+    function initReserveBeds() {
+      const state = loadState();
+      const existingReserve = (state.beds || []).filter(b => b.service === RESERVE_UNIT);
+      if (existingReserve.length === 0) {
+        for (let i = 1; i <= RESERVE_TOTAL; i++) {
+          state.beds.push({
+            bedId: `RES-${i}`,
+            service: RESERVE_UNIT,
+            chamber: "Reserve",
+            number: i,
+            type: "reserve",
+            occupiedBy: null
+          });
+        }
+        saveState(state);
+      }
+    }
+    initReserveBeds();
+    
     initServiceFilter();
     renderMatrix();
   </script>
