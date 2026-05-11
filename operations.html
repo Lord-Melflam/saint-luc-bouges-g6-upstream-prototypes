@@ -88,6 +88,7 @@
           <select id="serviceView" onchange="renderMatrix()">
             <option value="all">Global view (all services)</option>
           </select>
+          <button class="action" style="font-size:12px;padding:6px 10px;margin-left:auto;" onclick="if(confirm('Clear all bed data and reinitialize?')) { localStorage.clear(); location.reload(); }">🔄 Reset</button>
         </div>
         <div id="matrix"></div>
       </section>
@@ -105,13 +106,15 @@
     const THEME_KEY = "upstream-theme-mode";
     const LEGACY_THEME_KEY = "theme";
     const BED_INVENTORY = {
-      orthopedics: { total: 20, chambers: { "Ortho-A": 10, "Ortho-B": 10 } },
-      cardiology: { total: 20, chambers: { "Cardio-A": 10, "Cardio-B": 10 } },
-      emergency: { total: 20, chambers: { "ER-A": 10, "ER-B": 10 } },
-      pediatrics: { total: 20, chambers: { "Peds-A": 10, "Peds-B": 10 } }
+      orthopedics: { total: 20, chambers: { "O1": 5, "O2": 5, "O3": 5, "O4": 5 } },
+      cardiology: { total: 20, chambers: { "C1": 5, "C2": 5, "C3": 5, "C4": 5 } },
+      emergency: { total: 20, chambers: { "E1": 5, "E2": 5, "E3": 5, "E4": 5 } },
+      pediatrics: { total: 20, chambers: { "Peds-A": 10, "Peds-B": 10 } },
+      digestive: { total: 20, chambers: { "D1": 5, "D2": 5, "D3": 5, "D4": 5 } },
+      urology: { total: 20, chambers: { "U1": 5, "U2": 5, "U3": 5, "U4": 5 } }
     };
     const RESERVE_UNIT = "reserve-beds";
-    const RESERVE_TOTAL = 8; // 2 * 4 services
+    const RESERVE_TOTAL = 12; // 2 * 6 services
     let themeMode = "auto";
     let selectedBedId = null;
     let reserveAssignments = {}; // Track which unit each reserve bed is assigned to
@@ -512,25 +515,36 @@
     
     function initServiceBeds() {
       const state = loadState();
+      let needsReinit = false;
+      
+      // Check if all services have 20 beds; if not, reinit everything
       for (const [service, inventory] of Object.entries(BED_INVENTORY)) {
         const existing = (state.beds || []).filter(b => b.service === service && b.type !== "reserve");
-        if (existing.length === 0) {
+        if (existing.length !== 20) {
+          needsReinit = true;
+          break;
+        }
+      }
+      
+      if (needsReinit) {
+        state.beds = state.beds.filter(b => b.service === RESERVE_UNIT); // Keep only reserve beds
+        for (const [service, inventory] of Object.entries(BED_INVENTORY)) {
           let bedNum = 1;
           for (const [chamber, count] of Object.entries(inventory.chambers || {})) {
             for (let i = 0; i < count; i++) {
               state.beds.push({
-                bedId: `${service.slice(0, 3).toUpperCase()}-${bedNum}`,
+                bedId: `${service.slice(0, 3).toUpperCase()}-${String(bedNum).padStart(2, '0')}`,
                 service: service,
                 chamber: chamber,
                 number: bedNum++,
-                type: bedNum <= 10 ? "standard" : "standard",
+                type: "standard",
                 occupiedBy: null
               });
             }
           }
         }
+        saveState(state);
       }
-      saveState(state);
     }
     initServiceBeds();
     
